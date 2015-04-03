@@ -125,7 +125,7 @@ vhost_memory_region *get_val(memmap_trie *map, int ptr)
 }
 
 
-void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val)
+void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_ptr)
 {
 	trie_node *node_val;
 	int node_ptr = 0; /* start from root */
@@ -134,16 +134,37 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val)
         addr <<= sizeof(addr) * 8 - VHOST_PHYS_USED_BITS;
 	do {
 		unsigned i = addr >> (64 - RADIX_WIDTH_BITS);
+
 		addr <<= RADIX_WIDTH_BITS;
 
 		node_val = get_node(map, node_ptr);
-		if (node_val->val[i].ptr) {
+		if (node_val->val[i].ptr) { /* traverse tree */
 			node_ptr = node_val->val[i].ptr;
-		} else if (!node_val->val[i].ptr) {
-			
+		} else if (!node_val->val[i].ptr && !node_val->val[i].leaf) {
+			/* empty node, insert leaf here */
+			node_val->val[i].leaf = true;
+			if (val) { /* new value */
+				node_val->val[i].ptr = map->free_val_idx++;
+				*get_val(map, node_val->val[i].ptr) = *val;
+			} else { /* reuse allocated value, relocate case */
+				node_val->val[i].ptr = val_ptr;
+			}
+			break;
 		} else if (node_val->val[i].leaf) {
+			/* insert interim node, relocate old leaf there */
+			trie_node *new_node_val;
+			vhost_memory_region *old_val;
+			int old_val_ptr = node_val->val[i].ptr;
+
+			node_ptr = ++map->free_node_idx;
+			node_val->val[i].leaf = false;
+			node_val->val[i].ptr = node_ptr;
+
+			/* reinsert old value */
+			old_val = get_val(map, old_val_ptr);
+			insert(map, old_val->guest_phys_addr, NULL, old_val_ptr);
 		}
-	} while (done);
+	} while (1);
 }
 
 int main(int argc, char **argv)
@@ -152,6 +173,6 @@ int main(int argc, char **argv)
 	memmap_trie *map = create_memmap_trie();
 
 	for (i = 0; i < sizeof(vm)/sizeof(vm[0]); i++) {
-		insert(map, vm[i].guest_phys_addr, &vm[i]);
+		insert(map, vm[i].guest_phys_addr, &vm[i], 0);
 	}
 }
