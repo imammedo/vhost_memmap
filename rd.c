@@ -132,7 +132,6 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_p
 {
 	trie_node *node_val;
 	int node_ptr = 0; /* start from root */
-        bool done = false;
 
 //	printf("addr: 0x%llx\tval: %p\tval_ptr: %d\n", addr, val, val_ptr); 
         addr <<= sizeof(addr) * 8 - VHOST_PHYS_USED_BITS;
@@ -172,7 +171,6 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_p
 			node_ptr = node_val->val[i].ptr;
 		}
 	} while (1);
-//printf("---\n");
 }
 
 int ident = 0;
