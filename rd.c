@@ -127,22 +127,24 @@ vhost_memory_region *get_val(memmap_trie *map, int ptr)
 	return &map->val_tables[VAL_TBL_IDX(ptr)][VAL_IDX(ptr)];
 }
 
+#define DBG(fmt, ...) printf("%-*d  " fmt, level * 3, level,  __VA_ARGS__)
 
-void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_ptr)
+void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_ptr, int level)
 {
 	trie_node *node_val;
 	int node_ptr = 0; /* start from root */
 
-//	printf("addr: 0x%llx\tval: %p\tval_ptr: %d\n", addr, val, val_ptr); 
+	DBG("addr: 0x%llx\tval: %p\tval_ptr: %d\n", addr, val, val_ptr);
         addr <<= sizeof(addr) * 8 - VHOST_PHYS_USED_BITS;
 	do {
 		unsigned i = addr >> (64 - RADIX_WIDTH_BITS);
 
 		addr <<= RADIX_WIDTH_BITS;
-//	printf("ptr: %d\tsaddr: 0x%llx\ti: %d\n", node_ptr, addr, i); 
+		DBG("ptr: %d\tsaddr: 0x%llx\ti: %d\n", node_ptr, addr, i);
 
 		node_val = get_node(map, node_ptr);
 		if (node_val->val[i].leaf) {
+		DBG("split leaf\ti: %d\n", i);
 			/* insert interim node, relocate old leaf there */
 			trie_node *new_node_val;
 			vhost_memory_region *old_val;
@@ -154,8 +156,10 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_p
 
 			/* reinsert old value */
 			old_val = get_val(map, old_val_ptr);
-			insert(map, old_val->guest_phys_addr, NULL, old_val_ptr);
+			level++;
+			insert(map, old_val->guest_phys_addr, NULL, old_val_ptr, level);
 		} else if (!node_val->val[i].used) {
+		DBG("insert leaf\ti: %d\n", i);
 			node_val->val[i].used = true;
 			/* empty node, insert leaf here */
 			node_val->val[i].leaf = true;
@@ -169,6 +173,8 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_p
 
 		} else { /* traverse tree */
 			node_ptr = node_val->val[i].ptr;
+		        DBG("go to ptr: %d\ti: %d\n", node_ptr, i);
+			level++;
 		}
 	} while (1);
 }
@@ -206,7 +212,7 @@ int main(int argc, char **argv)
 	memmap_trie *map = create_memmap_trie();
 
 	for (i = 0; i < sizeof(vm)/sizeof(vm[0]); i++) {
-		insert(map, vm[i].guest_phys_addr, &vm[i], 0);
+		insert(map, vm[i].guest_phys_addr, &vm[i], 0, 0);
 	}
 
         dump_map(map, 0);
