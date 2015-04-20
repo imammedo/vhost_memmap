@@ -28,7 +28,8 @@ vhost_memory_region vm[] = {
 typedef struct {
 	uint16_t leaf: 1;
 	uint16_t used: 1;
-	uint16_t rsvd: 7;
+	uint16_t skip: 3;
+	uint16_t rsvd: 4;
 	uint16_t ptr:  8;
 } trie_node_value_t;
 
@@ -134,14 +135,18 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 	trie_node *node_val;
 
 	DBG("addr: 0x%llx\tval: %p\tval_ptr: %d\n", addr, val, val_ptr);
-//        addr <<= sizeof(addr) * 8 - VHOST_PHYS_USED_BITS;
+	addr <<= sizeof(addr) * 8 - VHOST_PHYS_USED_BITS;
 	do {
-		//unsigned i = (addr >> (64 - RADIX_WIDTH_BITS*level)) & (NODE_WITDH - 1);
-		unsigned i = addr >> RADIX_WIDTH_BITS*(level-1) & (NODE_WITDH - 1);
+		unsigned i;
+		uint64_t saddr;
+//		int lvl_shift = RADIX_WIDTH_BITS*(level-1);
+		int lvl_shift = 64 - RADIX_WIDTH_BITS*(level-1);
 
-		DBG("ptr: %d\t\ti: %x\taddr: %llx\n", node_ptr, i, addr);
 
 		node_val = get_node(map, node_ptr);
+		saddr = addr >> (lvl_shift);
+		i = saddr & (NODE_WITDH - 1);
+		DBG("ptr: %d\t\ti: %x\taddr: %llx\tsaddr: %llx\n", node_ptr, i, addr, saddr);
 		if (node_val->val[i].leaf) {
 		DBG("split leaf\ti: %x\n", i);
 			/* insert interim node, relocate old leaf there */
@@ -191,7 +196,7 @@ void dump_map(memmap_trie *map, int node_ptr)
 	node_val = get_node(map, node_ptr);        
 	for (i =0; i < NODE_WITDH; i++) {
 		if (node_val->val[i].used) {
-	                printf("%sN[%d]: idx: %d\n", in, node_ptr, i); 
+			printf("%sN[%d]: idx: %d\n", in, node_ptr, i);
 			if (node_val->val[i].leaf) {
 				vhost_memory_region *v =
 					get_val(map, node_val->val[i].ptr);
