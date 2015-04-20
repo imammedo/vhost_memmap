@@ -129,22 +129,21 @@ vhost_memory_region *get_val(memmap_trie *map, int ptr)
 
 #define DBG(fmt, ...) printf("%-*d  " fmt, level * 3, level,  __VA_ARGS__)
 
-void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_ptr, int level)
+void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_ptr, int val_ptr, int level)
 {
 	trie_node *node_val;
-	int node_ptr = 0; /* start from root */
 
 	DBG("addr: 0x%llx\tval: %p\tval_ptr: %d\n", addr, val, val_ptr);
-        addr <<= sizeof(addr) * 8 - VHOST_PHYS_USED_BITS;
+//        addr <<= sizeof(addr) * 8 - VHOST_PHYS_USED_BITS;
 	do {
-		unsigned i = addr >> (64 - RADIX_WIDTH_BITS);
+		//unsigned i = (addr >> (64 - RADIX_WIDTH_BITS*level)) & (NODE_WITDH - 1);
+		unsigned i = addr >> RADIX_WIDTH_BITS*(level-1) & (NODE_WITDH - 1);
 
-		addr <<= RADIX_WIDTH_BITS;
-		DBG("ptr: %d\tsaddr: 0x%llx\ti: %d\n", node_ptr, addr, i);
+		DBG("ptr: %d\t\ti: %x\taddr: %llx\n", node_ptr, i, addr);
 
 		node_val = get_node(map, node_ptr);
 		if (node_val->val[i].leaf) {
-		DBG("split leaf\ti: %d\n", i);
+		DBG("split leaf\ti: %x\n", i);
 			/* insert interim node, relocate old leaf there */
 			trie_node *new_node_val;
 			vhost_memory_region *old_val;
@@ -157,9 +156,10 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_p
 			/* reinsert old value */
 			old_val = get_val(map, old_val_ptr);
 			level++;
-			insert(map, old_val->guest_phys_addr, NULL, old_val_ptr, level);
+			insert(map, old_val->guest_phys_addr, NULL,
+				node_ptr, old_val_ptr, level);
 		} else if (!node_val->val[i].used) {
-		DBG("insert leaf\ti: %d\n", i);
+		DBG("insert leaf\ti: %x\taddr: %llx\n", i, addr);
 			node_val->val[i].used = true;
 			/* empty node, insert leaf here */
 			node_val->val[i].leaf = true;
@@ -173,7 +173,7 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_p
 
 		} else { /* traverse tree */
 			node_ptr = node_val->val[i].ptr;
-		        DBG("go to ptr: %d\ti: %d\n", node_ptr, i);
+		        DBG("go to ptr: %d\tx: %d\n", node_ptr, i);
 			level++;
 		}
 	} while (1);
@@ -212,7 +212,7 @@ int main(int argc, char **argv)
 	memmap_trie *map = create_memmap_trie();
 
 	for (i = 0; i < sizeof(vm)/sizeof(vm[0]); i++) {
-		insert(map, vm[i].guest_phys_addr, &vm[i], 0, 0);
+		insert(map, vm[i].guest_phys_addr, &vm[i], 0, 0, 1);
 	}
 
         dump_map(map, 0);
