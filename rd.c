@@ -130,50 +130,66 @@ vhost_memory_region *get_val(memmap_trie *map, int ptr)
 
 #define DBG(fmt, ...) printf("%-*d  " fmt, level * 3, level,  __VA_ARGS__)
 
-void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_ptr, int val_ptr, int level)
+void node_add_leaf(trie_node_value_t *node_val, int ptr)
+{
+	node_val->used = true;
+	node_val->leaf = true;
+	node_val->ptr = ptr;
+}
+
+/* returns prt to new node, which is inserted at node_val */
+int node_add_newnode(memmap_trie *map, trie_node_value_t *node_val)
+{
+	int ptr = ++map->free_node_idx;
+	trie_node *new_node = get_node(map, ptr);
+	node_val->used = true;
+	node_val->leaf = false;
+	node_val->ptr = ptr;
+	return ptr;
+}
+
+uint64_t get_index(int level, uint64_t addr)
+{
+	int lvl_shift = 64 - RADIX_WIDTH_BITS * (level - 1);
+	return (addr >> lvl_shift) & (NODE_WITDH - 1);
+}
+
+void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_ptr, int level)
 {
 	trie_node *node_val;
 
-	DBG("addr: 0x%llx\tval: %p\tval_ptr: %d\n", addr, val, val_ptr);
-	addr <<= sizeof(addr) * 8 - VHOST_PHYS_USED_BITS;
+	DBG("addr: 0x%llx\tval: %p\tval_ptr: %d\n", addr, val);
 	do {
 		unsigned i;
-		uint64_t saddr;
-//		int lvl_shift = RADIX_WIDTH_BITS*(level-1);
-		int lvl_shift = 64 - RADIX_WIDTH_BITS*(level-1);
 
-
+		i = get_index(level, addr);
 		node_val = get_node(map, node_ptr);
-		saddr = addr >> (lvl_shift);
-		i = saddr & (NODE_WITDH - 1);
-		DBG("ptr: %d\t\ti: %x\taddr: %llx\tsaddr: %llx\n", node_ptr, i, addr, saddr);
+		DBG("ptr: %d\t\ti: %x\taddr: %llx\n", node_ptr, i, addr);
 		if (node_val->val[i].leaf) {
-		DBG("split leaf\ti: %x\n", i);
+			DBG("split leaf\ti: %x\n", i);
 			/* insert interim node, relocate old leaf there */
-			trie_node *new_node_val;
-			vhost_memory_region *old_val;
-			int old_val_ptr = node_val->val[i].ptr;
+			uint64_t old_addr;
+			trie_node *new_node;
+			int new_ptr;
+			int val_ptr = node_val->val[i].ptr;
 
-			node_ptr = ++map->free_node_idx;
-			node_val->val[i].leaf = false;
-			node_val->val[i].ptr = node_ptr;
+			new_ptr = node_add_newnode(map, &node_val->val[i]);
 
-			/* reinsert old value */
-			old_val = get_val(map, old_val_ptr);
+			/* relocate old leaf to new node */
+			old_addr = get_val(map, val_ptr)->guest_phys_addr;
+			new_node = get_node(map, new_ptr);
 			level++;
-			insert(map, old_val->guest_phys_addr, NULL,
-				node_ptr, old_val_ptr, level);
+			i = get_index(level, old_addr);
+			DBG("new node ptr: %d\ti: %x\n", new_ptr, i);
+			node_add_leaf(&new_node->val[i], val_ptr);
+			node_ptr = new_ptr;
+			DBG("relocate leaf ptr %d to i: %x\taddr: %llx\n", val_ptr, i, old_addr);
 		} else if (!node_val->val[i].used) {
-		DBG("insert leaf\ti: %x\taddr: %llx\n", i, addr);
-			node_val->val[i].used = true;
-			/* empty node, insert leaf here */
-			node_val->val[i].leaf = true;
-			if (val) { /* new value */
-				node_val->val[i].ptr = map->free_val_idx++;
-				*get_val(map, node_val->val[i].ptr) = *val;
-			} else { /* reuse allocated value, relocate case */
-				node_val->val[i].ptr = val_ptr;
-			}
+			int val_ptr = map->free_val_idx++;
+
+			*get_val(map, val_ptr) = *val;
+			node_add_leaf(&node_val->val[i], val_ptr);
+			DBG("insert leaf\ti: %x\taddr: %llx\n", i, addr);
 			break;
 
 		} else { /* traverse tree */
@@ -248,9 +264,9 @@ int main(int argc, char **argv)
 	memmap_trie *map = create_memmap_trie();
 
 	for (i = 0; i < sizeof(vm)/sizeof(vm[0]); i++) {
-		insert(map, vm[i].guest_phys_addr, &vm[i], 0, 0, 1);
+		insert(map, vm[i].guest_phys_addr, &vm[i], 0, 1);
 	}
-	compress(map, 0);
+//	compress(map, 0);
 
         dump_map(map, 0);
 }
