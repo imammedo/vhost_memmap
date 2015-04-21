@@ -11,12 +11,12 @@ typedef struct vhost_memory_region {
 } vhost_memory_region;
 
 vhost_memory_region vm[] = {
-{ 0x100000000000000, 0x10000, 0x7fe3b0000000 },
 //{ 0x200000000, 0x40000000, 0x7fe3b0000000 },
 //{ 0x400000000, 0x40000000, 0x7fe3b0000000 },
-{ 0x0fffc0000000000, 0x2000, 0x7fe3fdc00000 },
-{ 0x000000000000000, 0x2000, 0x7fe2f0000000 },
-//{ 0x0000c0000, 0xbff40000, 0x7fe2f00c0000 },
+{ 0x000000000, 0x2000, 0x7fe2f0000000 },
+{ 0x0000c0000, 0x00100000, 0x7fe2f00c0000 },
+{ 0x0fffc0000, 0x2000, 0x7fe3fdc00000 },
+{ 0x100000000, 0x10000, 0x7fe3b0000000 },
 //{ 0x0f8000000, 0x4000000, 0x7fe2e8000000 },
 //{ 0x0fc054000, 0x2000, 0x7fe3fd600000 }
 };
@@ -201,6 +201,36 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 	} while (1);
 }
 
+void lookup(memmap_trie *map, uint64_t addr)
+{
+	vhost_memory_region *v;
+	trie_node *node_val;
+	int node_ptr = 0;
+	int level = 1;
+	unsigned i;
+
+	do {
+		i = get_index(level, addr);
+		printf("addr: %llx, i: %x, level: %d\n", addr, i, level);
+		node_val = get_node(map, node_ptr);
+		if (!node_val->val[i].used) {
+			printf("Lookup: %llx -> notfound at %x\n", addr, i);
+			return;
+		}
+		if (!node_val->val[i].leaf) {
+			node_ptr = node_val->val[i].ptr;
+			level++;
+			continue;
+		}
+		break;
+	} while (1);
+	printf("Lookup: %llx -> N[%d]: ", addr, node_ptr, node_val->val[i].skip);
+	if (node_val->val[i].leaf) {
+		v = get_val(map, node_val->val[i].ptr);
+		printf("L[%d]: a: %lx\n", node_val->val[i].ptr, v->guest_phys_addr);
+	}
+}
+
 void compress(memmap_trie *map, int node_ptr)
 {
 	int i;
@@ -270,4 +300,7 @@ int main(int argc, char **argv)
 //	compress(map, 0);
 
         dump_map(map, 0);
+	printf("---\n");
+        //lookup(map, 0);
+        lookup(map, 0xd0000);
 }
