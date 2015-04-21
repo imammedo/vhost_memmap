@@ -11,11 +11,11 @@ typedef struct vhost_memory_region {
 } vhost_memory_region;
 
 vhost_memory_region vm[] = {
-{ 0x100000000000000, 0x40000000, 0x7fe3b0000000 },
+{ 0x100000000000000, 0x10000, 0x7fe3b0000000 },
 //{ 0x200000000, 0x40000000, 0x7fe3b0000000 },
 //{ 0x400000000, 0x40000000, 0x7fe3b0000000 },
-{ 0x0fffc0000000000, 0x40000, 0x7fe3fdc00000 },
-{ 0x000000000000000, 0xa0000, 0x7fe2f0000000 },
+{ 0x0fffc0000000000, 0x2000, 0x7fe3fdc00000 },
+{ 0x000000000000000, 0x2000, 0x7fe2f0000000 },
 //{ 0x0000c0000, 0xbff40000, 0x7fe2f00c0000 },
 //{ 0x0f8000000, 0x4000000, 0x7fe2e8000000 },
 //{ 0x0fc054000, 0x2000, 0x7fe3fd600000 }
@@ -166,23 +166,24 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 		node_val = get_node(map, node_ptr);
 		DBG("ptr: %d\t\ti: %x\taddr: %llx\n", node_ptr, i, addr);
 		if (node_val->val[i].leaf) {
-			DBG("split leaf\ti: %x\n", i);
-			/* insert interim node, relocate old leaf there */
-			uint64_t old_addr;
 			trie_node *new_node;
+			uint64_t old_addr;
 			int new_ptr;
 			int val_ptr = node_val->val[i].ptr;
+			vhost_memory_region *old_val = get_val(map, val_ptr);
 
+			DBG("split leaf\ti: %x\n", i);
+			/* insert interim node, relocate old leaf there */
 			new_ptr = node_add_newnode(map, &node_val->val[i]);
 			new_node = get_node(map, new_ptr);
+			node_ptr = new_ptr;
 			DBG("new node ptr: %d\n", new_ptr);
 
 			/* relocate old leaf to new node */
 			level++;
-			old_addr = get_val(map, val_ptr)->guest_phys_addr;
+			old_addr = old_val->guest_phys_addr;
 			i = get_index(level, old_addr);
 			node_add_leaf(&new_node->val[i], val_ptr);
-			node_ptr = new_ptr;
 			DBG("relocate leaf ptr %d to i: %x\taddr: %llx\n", val_ptr, i, old_addr);
 		} else if (!node_val->val[i].used) {
 			int val_ptr = map->free_val_idx++;
