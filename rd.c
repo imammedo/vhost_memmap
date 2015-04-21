@@ -11,14 +11,14 @@ typedef struct vhost_memory_region {
 } vhost_memory_region;
 
 vhost_memory_region vm[] = {
-{ 0x100000000, 0x40000000, 0x7fe3b0000000 },
-{ 0x200000000, 0x40000000, 0x7fe3b0000000 },
-{ 0x400000000, 0x40000000, 0x7fe3b0000000 },
-{ 0x0fffc0000, 0x40000, 0x7fe3fdc00000 },
-{ 0x000000000, 0xa0000, 0x7fe2f0000000 },
-{ 0x0000c0000, 0xbff40000, 0x7fe2f00c0000 },
-{ 0x0f8000000, 0x4000000, 0x7fe2e8000000 },
-{ 0x0fc054000, 0x2000, 0x7fe3fd600000 }
+{ 0x100000000000000, 0x40000000, 0x7fe3b0000000 },
+//{ 0x200000000, 0x40000000, 0x7fe3b0000000 },
+//{ 0x400000000, 0x40000000, 0x7fe3b0000000 },
+{ 0x0fffc0000000000, 0x40000, 0x7fe3fdc00000 },
+{ 0x000000000000000, 0xa0000, 0x7fe2f0000000 },
+//{ 0x0000c0000, 0xbff40000, 0x7fe2f00c0000 },
+//{ 0x0f8000000, 0x4000000, 0x7fe2e8000000 },
+//{ 0x0fc054000, 0x2000, 0x7fe3fd600000 }
 };
 
 #define PAGE_SHIFT 12
@@ -158,7 +158,7 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 {
 	trie_node *node_val;
 
-	DBG("addr: 0x%llx\tval: %p\tval_ptr: %d\n", addr, val);
+	DBG("addr: 0x%llx\tval: %p\n", addr, val);
 	do {
 		unsigned i;
 
@@ -174,13 +174,13 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 			int val_ptr = node_val->val[i].ptr;
 
 			new_ptr = node_add_newnode(map, &node_val->val[i]);
+			new_node = get_node(map, new_ptr);
+			DBG("new node ptr: %d\n", new_ptr);
 
 			/* relocate old leaf to new node */
-			old_addr = get_val(map, val_ptr)->guest_phys_addr;
-			new_node = get_node(map, new_ptr);
 			level++;
+			old_addr = get_val(map, val_ptr)->guest_phys_addr;
 			i = get_index(level, old_addr);
-			DBG("new node ptr: %d\ti: %x\n", new_ptr, i);
 			node_add_leaf(&new_node->val[i], val_ptr);
 			node_ptr = new_ptr;
 			DBG("relocate leaf ptr %d to i: %x\taddr: %llx\n", val_ptr, i, old_addr);
