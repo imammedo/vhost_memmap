@@ -184,6 +184,37 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 	} while (1);
 }
 
+void compress(memmap_trie *map, int node_ptr)
+{
+	int i;
+	int child_count = 0;
+	int compressible_ptr;
+	trie_node *node_val = get_node(map, node_ptr);
+
+	/* compress children */
+	for (i =0; i < NODE_WITDH; i++) {
+		if (node_val->val[i].used && !node_val->val[i].leaf) {
+			compress(map, node_val->val[i].ptr);
+		}
+	}
+
+	/* check if path compressible */
+	for (i = 0; i < NODE_WITDH; i++) {
+		if (node_val->val[i].used) {
+			child_count++;
+			compressible_ptr = node_val->val[i].ptr;
+		}
+	}
+
+	/* do path compression */
+	if (child_count == 1) {
+		memcpy(node_val, get_node(map, compressible_ptr), sizeof(*node_val));
+		for (i = 0; i < NODE_WITDH; i++)
+			node_val->val[i].skip++;
+	}
+
+}
+
 int ident = 0;
 void dump_map(memmap_trie *map, int node_ptr)
 {
@@ -196,7 +227,7 @@ void dump_map(memmap_trie *map, int node_ptr)
 	node_val = get_node(map, node_ptr);        
 	for (i =0; i < NODE_WITDH; i++) {
 		if (node_val->val[i].used) {
-			printf("%sN[%d]: idx: %d\n", in, node_ptr, i);
+			printf("%sN[%d]: idx: %x  skip: %d\n", in, node_ptr, i, node_val->val[i].skip);
 			if (node_val->val[i].leaf) {
 				vhost_memory_region *v =
 					get_val(map, node_val->val[i].ptr);
@@ -219,6 +250,7 @@ int main(int argc, char **argv)
 	for (i = 0; i < sizeof(vm)/sizeof(vm[0]); i++) {
 		insert(map, vm[i].guest_phys_addr, &vm[i], 0, 0, 1);
 	}
+	compress(map, 0);
 
         dump_map(map, 0);
 }
