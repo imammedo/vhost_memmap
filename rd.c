@@ -13,12 +13,15 @@ typedef struct vhost_memory_region {
 vhost_memory_region vm[] = {
 //{ 0x200000000, 0x40000000, 0x7fe3b0000000 },
 //{ 0x400000000, 0x40000000, 0x7fe3b0000000 },
-{ 0x000000000, 0x2000, 0x7fe2f0000000 },
-{ 0x0000c0000, 0x00100000, 0x7fe2f00c0000 },
-{ 0x0fffc0000, 0x2000, 0x7fe3fdc00000 },
-{ 0x100000000, 0x10000, 0x7fe3b0000000 },
+//{ 0x000000000, 0x2000, 0x7fe2f0000000 },
+//{ 0x0000c0000, 0x00100000, 0x7fe2f00c0000 },
+//{ 0x0fffc0000, 0x2000, 0x7fe3fdc00000 },
+//{ 0x100000000, 0x10000, 0x7fe3b0000000 },
 //{ 0x0f8000000, 0x4000000, 0x7fe2e8000000 },
 //{ 0x0fc054000, 0x2000, 0x7fe3fd600000 }
+{ 0x1000000000000, 0x10000, 0x7fe3b0000000 },
+{ 0x2000000000000, 0x10000, 0x7fe3b0000000 },
+{ 0x2100000000000, 0x10000, 0x7fe3b0000000 },
 };
 
 #define PAGE_SHIFT 12
@@ -137,15 +140,18 @@ void node_add_leaf(trie_node_value_t *node_val, int ptr)
 	node_val->ptr = ptr;
 }
 
-/* returns prt to new node, which is inserted at node_val */
-int node_add_newnode(memmap_trie *map, trie_node_value_t *node_val)
+void replace_node(trie_node_value_t *node_val, int ptr)
 {
-	int ptr = ++map->free_node_idx;
-	trie_node *new_node = get_node(map, ptr);
 	node_val->used = true;
 	node_val->leaf = false;
 	node_val->ptr = ptr;
-	return ptr;
+}
+
+/* returns prt to new node */
+trie_node * newnode(memmap_trie *map, int *new_ptr)
+{
+	*new_ptr = ++map->free_node_idx;
+	return get_node(map, *new_ptr);
 }
 
 uint64_t get_index(int level, uint64_t addr)
@@ -154,37 +160,81 @@ uint64_t get_index(int level, uint64_t addr)
 	return (addr >> lvl_shift) & (NODE_WITDH - 1);
 }
 
+/* return previous skip value */
+int set_skip(trie_node *node_val, int skip)
+{
+	int i;
+	int old_skip = node_val->val[i].skip;
+
+	for (i = 0;  i < NODE_WITDH; i++) {
+		node_val->val[i].skip = skip;
+	}
+	return old_skip;
+}
+
+/* get common prefix length */
+static int prefix_len(memmap_trie *map, uint64_t a, trie_node *node_val)
+{
+	int i;
+	uint64_t b;
+
+	/* FIXME: need to find any leaf under node to find address to get prefix */
+	for (i = 0; (i < NODE_WITDH) && !node_val->val[i].leaf; i++) ;;
+	if (i == NODE_WITDH)
+		return 0;
+	b = get_val(map, node_val->val[i].ptr)->guest_phys_addr;
+	for (i = 1; i * RADIX_WIDTH_BITS < 64; i++) {
+		uint64_t x = a >> 64 - RADIX_WIDTH_BITS * i;
+		uint64_t y = b >> 64 - RADIX_WIDTH_BITS * i;
+
+		if (x ^ y)
+			break;
+	}
+	return i - 1;
+}
+
 void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_ptr, int level)
 {
 	trie_node *node_val;
+	int skip = 0;
 
 	DBG("addr: 0x%llx\tval: %p\n", addr, val);
 	do {
 		unsigned i;
 
-		i = get_index(level, addr);
 		node_val = get_node(map, node_ptr);
+		prefix_len(map, addr, node_val);
+		skip += node_val->val[0].skip;
+		i = get_index(level + skip, addr);
 		DBG("ptr: %d\t\ti: %x\taddr: %llx\n", node_ptr, i, addr);
 		if (node_val->val[i].leaf) {
 			trie_node *new_node;
 			uint64_t old_addr;
+			int old_nskip;
 			int new_ptr;
+			int k;
 			int val_ptr = node_val->val[i].ptr;
 			vhost_memory_region *old_val = get_val(map, val_ptr);
+			old_addr = old_val->guest_phys_addr;
 
 			DBG("split leaf\ti: %x\n", i);
+		// NO skip change needed since prefix > old_prefix
+		//	old_nskip = set_skip(node_val, XXX); // XXX is relative
 			/* insert interim node, relocate old leaf there */
-			new_ptr = node_add_newnode(map, &node_val->val[i]);
-			new_node = get_node(map, new_ptr);
-			node_ptr = new_ptr;
+			new_node = newnode(map, &new_ptr);
 			DBG("new node ptr: %d\n", new_ptr);
 
-			/* relocate old leaf to new node */
+			/* relocate old leafs to new node */
+			k = get_index(
+			    (level + skip /*commulative*/) /*abs*/ + 1 /* new level */,
+			    old_addr);
+			node_add_leaf(&new_node->val[k], val_ptr);
+			DBG("relocate leaf ptr %d to k: %x\taddr: %llx\n"
+			, val_ptr, k, old_addr);
+
+			replace_node(&node_val->val[i], new_ptr);
+			node_ptr = new_ptr;
 			level++;
-			old_addr = old_val->guest_phys_addr;
-			i = get_index(level, old_addr);
-			node_add_leaf(&new_node->val[i], val_ptr);
-			DBG("relocate leaf ptr %d to i: %x\taddr: %llx\n", val_ptr, i, old_addr);
 		} else if (!node_val->val[i].used) {
 			int val_ptr = map->free_val_idx++;
 
@@ -296,6 +346,7 @@ int main(int argc, char **argv)
 
 	for (i = 0; i < sizeof(vm)/sizeof(vm[0]); i++) {
 		insert(map, vm[i].guest_phys_addr, &vm[i], 0, 1);
+       // 	dump_map(map, 0);
 	}
 //	compress(map, 0);
 
