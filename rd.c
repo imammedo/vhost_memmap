@@ -212,29 +212,32 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 			uint64_t old_addr;
 			int old_nskip;
 			int new_ptr;
-			int k;
+			int k, j;
 			int val_ptr = node_val->val[i].ptr;
 			vhost_memory_region *old_val = get_val(map, val_ptr);
 			old_addr = old_val->guest_phys_addr;
 
 			DBG("split leaf\ti: %x\n", i);
-		// NO skip change needed since prefix > old_prefix
-		//	old_nskip = set_skip(node_val, XXX); // XXX is relative
 			/* insert interim node, relocate old leaf there */
 			new_node = newnode(map, &new_ptr);
 			DBG("new node ptr: %d\n", new_ptr);
 
+			level++; /* +1 for new level */
+			for (j = level + skip; j * RADIX_WIDTH_BITS < 64; j++) {
+				k = get_index(j, old_addr);
+				if (get_index(j, addr) != k)
+					break;
+			}
+			set_skip(new_node, j - (level + skip));
+
 			/* relocate old leafs to new node */
-			k = get_index(
-			    (level + skip /*commulative*/) /*abs*/ + 1 /* new level */,
-			    old_addr);
 			node_add_leaf(&new_node->val[k], val_ptr);
 			DBG("relocate leaf ptr %d to k: %x\taddr: %llx\n"
 			, val_ptr, k, old_addr);
 
 			replace_node(&node_val->val[i], new_ptr);
 			node_ptr = new_ptr;
-			level++;
+			/* fall through and let 'addr' leaf be inserted */
 		} else if (!node_val->val[i].used) {
 			int val_ptr = map->free_val_idx++;
 
