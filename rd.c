@@ -371,12 +371,13 @@ void dump_map(memmap_trie *map, int node_ptr)
 	int i;
 	char in[] = "                                                   ";
 	in[ident*3] = 0;
+	trie_prefix *nprefix = get_node_prefix(map, node_ptr);
 
         ident++;
 	node_val = get_node(map, node_ptr);
 	for (i =0; i < NODE_WITDH; i++) {
 		if (node_val->val[i].used) {
-			printf("%sN%d[%x]  skip: %d\n", in, node_ptr, i, node_val->val[i].skip);
+			printf("%sN%d[%x]  skip: %d prefix: %.16llx:%d\n", in, node_ptr, i, node_val->val[i].skip, nprefix->val, nprefix->len);
 			if (node_val->val[i].leaf) {
 				vhost_memory_region *v =
 					get_val(map, node_val->val[i].ptr);
