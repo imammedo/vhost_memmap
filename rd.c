@@ -19,9 +19,9 @@ vhost_memory_region vm[] = {
 //{ 0x100000000, 0x10000, 0x7fe3b0000000 },
 //{ 0x0f8000000, 0x4000000, 0x7fe2e8000000 },
 //{ 0x0fc054000, 0x2000, 0x7fe3fd600000 }
-{ 0x1000000000000, 0x10000, 0x7fe3b0000000 },
-{ 0x2000000000000, 0x10000, 0x7fe3b0000000 },
-{ 0x2100000000000, 0x10000, 0x7fe3b0000000 },
+{ 0xaabb020000000000, 0x10000, 0x7fe3b0000000 },
+{ 0xaabb021000000000, 0x10000, 0x7fe3b0000000 },
+{ 0xaabb010000000000, 0x10000, 0x7fe3b0000000 },
 };
 
 #define PAGE_SHIFT 12
@@ -52,11 +52,17 @@ typedef struct {
 #define VAL_TBL_IDX(x) (x / VALS_PER_TBL)
 #define VAL_IDX(x) (x % VALS_PER_TBL)
 
+typedef struct trie_prefix {
+	uint8_t len;
+	uint64_t val;
+} trie_prefix;
+
 typedef struct {
         int free_node_idx;
         int free_val_idx;
         int lookup_tables_number;
 	trie_node *lookup_tables[LOOKUP_TBLS_MAX];
+	trie_prefix *prefix_tables[LOOKUP_TBLS_MAX];
 	vhost_memory_region *val_tables[12];
 } memmap_trie;
 
@@ -76,7 +82,9 @@ trie_node *alloc_node(memmap_trie *map, int node_ptr)
 	/* alloc lookup table if it doesn't exists */
 	if (!map->lookup_tables[i]) {
 		map->lookup_tables[i] = malloc(PAGE_SIZE);
+		map->prefix_tables[i] = malloc(PAGE_SIZE);
 		memset(map->lookup_tables[i], 0, PAGE_SIZE);
+		memset(map->prefix_tables[i], 0, PAGE_SIZE);
 	}
 
 	return &map->lookup_tables[i][NODE_IDX(node_ptr)];
@@ -98,6 +106,12 @@ trie_node *get_node(memmap_trie *map, int node_ptr)
 		return alloc_node(map, node_ptr);
 
 	return &map->lookup_tables[LOOKUP_IDX(node_ptr)][NODE_IDX(node_ptr)];
+}
+
+trie_prefix *get_node_prefix(memmap_trie *map, int node_ptr)
+{
+	get_node(map, node_ptr);
+	return &map->prefix_tables[LOOKUP_IDX(node_ptr)][NODE_IDX(node_ptr)];
 }
 
 vhost_memory_region *alloc_val(memmap_trie *map, int ptr)
@@ -156,7 +170,7 @@ trie_node * newnode(memmap_trie *map, int *new_ptr)
 
 uint64_t get_index(int level, uint64_t addr)
 {
-	int lvl_shift = 64 - RADIX_WIDTH_BITS * (level - 1);
+	int lvl_shift = 64 - RADIX_WIDTH_BITS * (level + 1);
 	return (addr >> lvl_shift) & (NODE_WITDH - 1);
 }
 
@@ -172,27 +186,6 @@ int set_skip(trie_node *node_val, int skip)
 	return old_skip;
 }
 
-/* get common prefix length */
-static int prefix_len(memmap_trie *map, uint64_t a, trie_node *node_val)
-{
-	int i;
-	uint64_t b;
-
-	/* FIXME: need to find any leaf under node to find address to get prefix */
-	for (i = 0; (i < NODE_WITDH) && !node_val->val[i].leaf; i++) ;;
-	if (i == NODE_WITDH)
-		return 0;
-	b = get_val(map, node_val->val[i].ptr)->guest_phys_addr;
-	for (i = 1; i * RADIX_WIDTH_BITS < 64; i++) {
-		uint64_t x = a >> 64 - RADIX_WIDTH_BITS * i;
-		uint64_t y = b >> 64 - RADIX_WIDTH_BITS * i;
-
-		if (x ^ y)
-			break;
-	}
-	return i - 1;
-}
-
 void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_ptr, int level)
 {
 	trie_node *node_val;
@@ -201,34 +194,69 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 	DBG("addr: 0x%llx\tval: %p\n", addr, val);
 	do {
 		unsigned i;
+		trie_prefix *prefix = get_node_prefix(map, node_ptr);
 
 		node_val = get_node(map, node_ptr);
-		prefix_len(map, addr, node_val);
 		skip += node_val->val[0].skip;
+
 		i = get_index(level + skip, addr);
-		DBG("ptr: %d\t\ti: %x\taddr: %llx\n", node_ptr, i, addr);
+		DBG("ptr: %d\t\ti: %x\taddr: %llx\tskip: %d\n", node_ptr, i, addr, skip);
+		DBG("prefix:  %.16llx:%d\n", prefix->val, prefix->len);
 		if (node_val->val[i].leaf) {
+			trie_prefix *nprefix;
 			trie_node *new_node;
 			uint64_t old_addr;
 			int old_nskip;
 			int new_ptr;
 			int k, j;
+			int node_skip;
 			int val_ptr = node_val->val[i].ptr;
 			vhost_memory_region *old_val = get_val(map, val_ptr);
 			old_addr = old_val->guest_phys_addr;
 
-			DBG("split leaf\ti: %x\n", i);
 			/* insert interim node, relocate old leaf there */
 			new_node = newnode(map, &new_ptr);
+			nprefix = get_node_prefix(map, new_ptr);
 			DBG("new node ptr: %d\n", new_ptr);
 
+			/* compare prefix */
+			for (j = 0; j < (prefix->len - 1); j++) {
+				k = get_index(j, prefix->val);
+				if (get_index(j, addr) != k)
+					break;
+			}
+			if (j < prefix->len) { /* prefix mismatch */
+				DBG("prefix mismatch, relocate current N%d\n", node_ptr);
+				memcpy(new_node, node_val, sizeof(*new_node));
+				*nprefix = *get_node_prefix(map, node_ptr);
+				/* form new node in place of current */
+				skip -= node_val->val[0].skip;
+				memset(node_val, 0, sizeof(*node_val));
+				prefix->len = j;
+				set_skip(node_val, j - (level + skip));
+				i = get_index(level + skip, prefix->val);
+				replace_node(&node_val->val[i], new_ptr);
+				continue;
+			}
+
+
+			DBG("split leaf\ti: %x\n", i);
+
 			level++; /* +1 for new level */
+			/* compare with path prefix */
 			for (j = level + skip; j * RADIX_WIDTH_BITS < 64; j++) {
 				k = get_index(j, old_addr);
 				if (get_index(j, addr) != k)
 					break;
 			}
-			set_skip(new_node, j - (level + skip));
+			node_skip = j - (level + skip);
+			set_skip(new_node, node_skip);
+			/* adjust prefix to incl. skipped bits */
+			for (j = 0; node_skip && j < node_skip + level + skip; j++) {
+				nprefix->len += 1;
+				nprefix->val |= get_index(j, old_addr) << (64 - RADIX_WIDTH_BITS * (j + 1));
+			}
+			DBG("adjusted node prefix: 0x%.16llx:%d\n", nprefix->val, nprefix->len);
 
 			/* relocate old leafs to new node */
 			node_add_leaf(&new_node->val[k], val_ptr);
@@ -248,7 +276,7 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 
 		} else { /* traverse tree */
 			node_ptr = node_val->val[i].ptr;
-		        DBG("go to ptr: %d\tx: %d\n", node_ptr, i);
+		        DBG("go to ptr: %d\ti: %x\n", node_ptr, i);
 			level++;
 		}
 	} while (1);
@@ -324,7 +352,7 @@ void dump_map(memmap_trie *map, int node_ptr)
 	in[ident*3] = 0;
 
         ident++;
-	node_val = get_node(map, node_ptr);        
+	node_val = get_node(map, node_ptr);
 	for (i =0; i < NODE_WITDH; i++) {
 		if (node_val->val[i].used) {
 			printf("%sN[%d]: idx: %x  skip: %d\n", in, node_ptr, i, node_val->val[i].skip);
@@ -348,7 +376,7 @@ int main(int argc, char **argv)
 	memmap_trie *map = create_memmap_trie();
 
 	for (i = 0; i < sizeof(vm)/sizeof(vm[0]); i++) {
-		insert(map, vm[i].guest_phys_addr, &vm[i], 0, 1);
+		insert(map, vm[i].guest_phys_addr, &vm[i], 0, 0);
        // 	dump_map(map, 0);
 	}
 //	compress(map, 0);
