@@ -19,10 +19,13 @@ vhost_memory_region vm[] = {
 //{ 0x100000000, 0x10000, 0x7fe3b0000000 },
 //{ 0x0f8000000, 0x4000000, 0x7fe2e8000000 },
 //{ 0x0fc054000, 0x2000, 0x7fe3fd600000 }
-{ 0xaabb020000000000, 0x10000, 0x7fe3b0000000 },
-{ 0xaabb021000000000, 0x10000, 0x7fe3b0000000 },
-{ 0xaabb010000000000, 0x10000, 0x7fe3b0000000 },
-{ 0xaabb020200000000, 0x10000, 0x7fe3b0000000 },
+{ 0xaabb020000000001, 0x10000, 0x7fe3b0000000 },
+{ 0xaabb021000000002, 0x10000, 0x7fe3b0000000 },
+{ 0xaabb010000000003, 0x10000, 0x7fe3b0000000 },
+{ 0xaabb020200000004, 0x10000, 0x7fe3b0000000 },
+{ 0xaabb021030000005, 0x10000, 0x7fe3b0000000 },
+//{ 0xaabb011000000006, 0x10000, 0x7fe3b0000000 },
+//{ 0xaabb041000000007, 0x10000, 0x7fe3b0000000 },
 };
 
 #define PAGE_SHIFT 12
@@ -222,32 +225,33 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 		if (j < prefix->len) { /* prefix mismatch */
 			new_node = newnode(map, &new_ptr);
 			nprefix = get_node_prefix(map, new_ptr);
-			DBG("prefix mismatch, relocate N%d to N%d\n", node_ptr, new_ptr);
 			memcpy(new_node, node_val, sizeof(*new_node));
-			set_skip(new_node, new_node->val[0].skip - (j - (level + skip)));
+			set_skip(new_node, new_node->val[0].skip - (j - (level + skip)) - 1 /* new level vill consume 1 skip step */);
 			*nprefix = *get_node_prefix(map, node_ptr);
 			/* form new node in place of current */
 			memset(node_val, 0, sizeof(*node_val));
 			prefix->len = j;
+			i = get_index(j - (level + skip), prefix->val);
+			DBG("Prefix mismatch, relocate N%d to N%d at N%d[%x]\n", node_ptr, new_ptr, node_ptr, i);
 			set_skip(node_val, j - (level + skip));
-			i = get_index(level + skip, prefix->val);
+			DBG("addjust prefix %.16llx:%d\n", prefix->val, prefix->len);
 			replace_node(&node_val->val[i], new_ptr);
 		}
 
 		/* speculative longer prefix lookup */
-		i = get_index(level + skip, addr);
+/*		i = get_index(level + skip, addr);
 		if (node_val->val[i].used && !node_val->val[i].leaf) {
 			nprefix = get_node_prefix(map, node_val->val[i].ptr);
 			if (j >= prefix_len(addr, nprefix)) {
 				skip += node_val->val[0].skip;
 			} else
 				DBG("longer prefix lookup matches: N%d[%x] %.16llx:%d\n", node_ptr, i, nprefix->val, nprefix->len);
-		} else
+		} else  */
 			skip += node_val->val[0].skip;
 
 		i = get_index(level + skip, addr);
 		DBG("N%d[%x]\taddr: %llx\tskip: %d\n", node_ptr, i, addr, skip);
-		DBG("N%d prefix:  %.16llx:%d\n", node_ptr, prefix->val, prefix->len);
+		DBG("N%d prefix: %.16llx:%d Nskip: %d\n", node_ptr, prefix->val, prefix->len, node_val->val[0].skip);
 		if (node_val->val[i].leaf) {
 			uint64_t old_addr;
 			int old_nskip;
@@ -256,6 +260,27 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 			vhost_memory_region *old_val = get_val(map, val_ptr);
 			old_addr = old_val->guest_phys_addr;
 
+			if (!prefix->len) {
+				/* node has not prefix, root node with one leaf */
+				for (j = 0; j * RADIX_WIDTH_BITS < 64; j++) {
+					k = get_index(j, old_addr);
+					if (get_index(j, addr) != k)
+						break;
+					prefix->len += 1;
+					prefix->val |= get_index(j, old_addr) << (64 - RADIX_WIDTH_BITS * (j + 1));
+				}
+				DBG("Set root N%d prefix:  %.16llx:%d\n",
+					 node_ptr, prefix->val, prefix->len);
+				/* relocate old leaf to new slot */
+				DBG("relocate L%d to N%d[%x]\taddr: %llx\n"
+					, val_ptr, node_ptr, k, old_addr);
+				node_add_leaf(&node_val->val[k], val_ptr);
+				node_val->val[i].leaf = 0;
+				node_val->val[i].used = 0;
+				set_skip(node_val, prefix->len);
+				/* go through loop again to add addr */
+				continue;
+			}
 			DBG("split leaf at N%d[%x]\n", node_ptr, i);
 
 			/* insert interim node, relocate old leaf there */
@@ -273,6 +298,7 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 			node_skip = j - (level + skip);
 			set_skip(new_node, node_skip);
 			/* adjust prefix to incl. skipped bits */
+			// FIXME: no need to check '; node_skip && '
 			for (j = 0; node_skip && j < node_skip + level + skip; j++) {
 				nprefix->len += 1;
 				nprefix->val |= get_index(j, old_addr) << (64 - RADIX_WIDTH_BITS * (j + 1));
