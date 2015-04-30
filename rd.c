@@ -20,13 +20,15 @@ vhost_memory_region vm[] = {
 //{ 0x0f8000000, 0x4000000, 0x7fe2e8000000 },
 //{ 0x0fc054000, 0x2000, 0x7fe3fd600000 }
 { 0xaabb020000000001, 0x10000, 0x7fe3b0000000 },
+{ 0x0000000000000001, 0x10000, 0x7fe3b0000000 },
 { 0xaabb021000000002, 0x10000, 0x7fe3b0000000 },
 { 0xaabb010000000003, 0x10000, 0x7fe3b0000000 },
 { 0xaabb020200000004, 0x10000, 0x7fe3b0000000 },
 { 0xaabb02103000cc05, 0x10000, 0x7fe3b0000000 },
 { 0xaabb02103000cc06, 0x10000, 0x7fe3b0000000 },
 { 0xaabb011000000006, 0x10000, 0x7fe3b0000000 },
-//{ 0xaabb041000000007, 0x10000, 0x7fe3b0000000 },
+{ 0xaabb041000000007, 0x10000, 0x7fe3b0000000 },
+{ 0x00000000dd000000, 0x10000, 0x7fe3b0000000 },
 };
 
 #define PAGE_SHIFT 12
@@ -212,7 +214,7 @@ void set_prefix(trie_prefix *prefix, uint64_t addr, int len)
 	prefix->len = len;
 }
 
-#define DBG(...)
+//#define DBG(...)
 void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_ptr, int level)
 {
 	trie_node *node_val;
@@ -238,8 +240,8 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 			*nprefix = *get_node_prefix(map, node_ptr);
 			/* form new node in place of current */
 			memset(node_val, 0, sizeof(*node_val));
-			prefix->len = j;
-			i = get_index(j - (level + skip), prefix->val);
+			i = get_index(prefix->len, prefix->val);
+			set_prefix(prefix, prefix->val, j);
 			DBG("Prefix mismatch, relocate N%d to N%d at N%d[%x]\n", node_ptr, new_ptr, node_ptr, i);
 			set_skip(node_val, j - (level + skip));
 			DBG("addjust prefix %.16llx:%d\n", prefix->val, prefix->len);
@@ -258,9 +260,20 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 			vhost_memory_region *old_val = get_val(map, val_ptr);
 			old_addr = old_val->guest_phys_addr;
 
-			if (!prefix->len) {
-				/* node has not prefix, root node with one leaf */
-				j = prefix_len(addr, old_addr, sizeof(addr));
+			/* root node with no prefix */
+			/* check if there is a common prefix with leaves */
+			j = prefix_len(addr, old_addr, sizeof(addr));;
+			for (k = 0; !prefix->len && (k < NODE_WITDH); k++) {
+				int leaf_addr;
+				int len;
+
+				if (!node_val->val[k].leaf)
+					continue;
+				leaf_addr = get_val(map, node_val->val[k].ptr)->guest_phys_addr;
+				len = prefix_len(addr, leaf_addr, sizeof(addr));
+				j = len < j ? len : j;
+			}
+			if (!prefix->len && j) {
 				k = get_index(j, old_addr);
 				set_prefix(prefix, old_addr, j);
 				DBG("Set root N%d prefix:  %.16llx:%d\n",
@@ -394,7 +407,7 @@ void dump_map(memmap_trie *map, int node_ptr)
 			if (node_val->val[i].leaf) {
 				vhost_memory_region *v =
 					get_val(map, node_val->val[i].ptr);
-				printf("%s   L%d: a: %lx\n", in,
+				printf("%s   L%d: a: %.16llx\n", in,
 					 node_val->val[i].ptr,
 					 v->guest_phys_addr);
 			} else {
@@ -417,7 +430,7 @@ int main(int argc, char **argv)
 //	compress(map, 0);
 
         dump_map(map, 0);
-	printf("---\n");
+	//printf("---\n");
         //lookup(map, 0);
-        lookup(map, 0xd0000);
+        //lookup(map, 0xd0000);
 }
