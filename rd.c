@@ -60,8 +60,9 @@ typedef struct {
 #define VAL_IDX(x) (x % VALS_PER_TBL)
 
 typedef struct trie_prefix {
-	uint8_t len;
 	uint64_t val;
+	uint8_t len;
+	bool in_use;
 } trie_prefix;
 
 typedef struct {
@@ -229,29 +230,75 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 		trie_prefix *prefix = get_node_prefix(map, node_ptr);
 
 		node_val = get_node(map, node_ptr);
-		/* compare prefix */
-		j = prefix_len(addr, prefix->val, prefix->len);
 
+		/* path compression at root node */
+		if (!prefix->in_use) {
+			int val_ptr;
+			uint64_t old_addr;
+
+			/* find a leaf so we could try get common prefix */
+			for (i = 0; i < NODE_WITDH; i++)
+				if (node_val->val[i].leaf)
+					break;
+
+			if (i < NODE_WITDH) { /* have leaf to compare */
+				/*
+				 *  disable path compression at root for next inserts
+				 *  since path will be already compressed if compressable
+				 */
+				prefix->in_use = true;
+
+				val_ptr = node_val->val[i].ptr;
+				old_addr = get_val(map, val_ptr)->guest_phys_addr;
+				j = prefix_len(addr, old_addr, sizeof(addr));
+				if (j) { /* compress path using common prefix */
+					k = get_index(j, old_addr);
+					set_prefix(prefix, old_addr, j);
+					set_skip(node_val, prefix->len);
+					DBG("Compress N%d with prefix: %.16llx:%d\n",
+						node_ptr, prefix->val, prefix->len);
+					/* relocate old leaf to new slot */
+					node_add_leaf(&node_val->val[k], val_ptr);
+					node_val->val[i].leaf = 0;
+					node_val->val[i].used = 0;
+					DBG("relocate L%d to N%d[%x]\taddr: %llx\n",
+						val_ptr, node_ptr, k, old_addr);
+					/* fall through to insert 'addr' in compressed node */
+				}
+			}
+		}
+
+		/* lazy expand level if new common prefix is smaller than current */
+		j = prefix_len(addr, prefix->val, prefix->len);
 		if (j < prefix->len) { /* prefix mismatch */
+			/* copy current node to a new one */
 			new_node = newnode(map, &new_ptr);
 			nprefix = get_node_prefix(map, new_ptr);
 			memcpy(new_node, node_val, sizeof(*new_node));
-			set_skip(new_node, new_node->val[0].skip - (j - (level + skip)) - 1 /* new level vill consume 1 skip step */);
 			*nprefix = *get_node_prefix(map, node_ptr);
+			set_skip(new_node,
+				new_node->val[0].skip - (j - (level + skip))
+				- 1 /* new level will consume 1 skip step */);
+
 			/* form new node in place of current */
 			memset(node_val, 0, sizeof(*node_val));
-			i = get_index(prefix->len, prefix->val);
+			i = get_index(j, prefix->val);
 			set_prefix(prefix, prefix->val, j);
-			DBG("Prefix mismatch, relocate N%d to N%d at N%d[%x]\n", node_ptr, new_ptr, node_ptr, i);
 			set_skip(node_val, j - (level + skip));
-			DBG("addjust prefix %.16llx:%d\n", prefix->val, prefix->len);
 			replace_node(&node_val->val[i], new_ptr);
+			DBG("Prefix mismatch, relocate N%d to N%d at N%d[%x]\n", node_ptr, new_ptr, node_ptr, i);
+			DBG("addjust prefix %.*llx:%d\n", prefix->len * 2,
+				prefix->val >> (64 - RADIX_WIDTH_BITS * prefix->len),
+				prefix->len);
 		}
+
 
 		skip += node_val->val[0].skip;
 		i = get_index(level + skip, addr);
-		DBG("N%d[%x]\taddr: %llx\tskip: %d\n", node_ptr, i, addr, skip);
-		DBG("N%d prefix: %.16llx:%d Nskip: %d\n", node_ptr, prefix->val, prefix->len, node_val->val[0].skip);
+		DBG("N%d[%x]\taddr: %.16llx\tskip: %d\n", node_ptr, i, addr, skip);
+		DBG("N%d prefix: %.*llx:%d Nskip: %d\n", node_ptr, prefix->len * 2,
+			 prefix->val >> (64 - RADIX_WIDTH_BITS * prefix->len),
+			 prefix->len, node_val->val[0].skip);
 		if (node_val->val[i].leaf) {
 			uint64_t old_addr;
 			int old_nskip;
@@ -260,48 +307,22 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 			vhost_memory_region *old_val = get_val(map, val_ptr);
 			old_addr = old_val->guest_phys_addr;
 
-			/* root node with no prefix */
-			/* check if there is a common prefix with leaves */
-			j = prefix_len(addr, old_addr, sizeof(addr));;
-			for (k = 0; !prefix->len && (k < NODE_WITDH); k++) {
-				int leaf_addr;
-				int len;
-
-				if (!node_val->val[k].leaf)
-					continue;
-				leaf_addr = get_val(map, node_val->val[k].ptr)->guest_phys_addr;
-				len = prefix_len(addr, leaf_addr, sizeof(addr));
-				j = len < j ? len : j;
-			}
-			if (!prefix->len && j) {
-				k = get_index(j, old_addr);
-				set_prefix(prefix, old_addr, j);
-				DBG("Set root N%d prefix:  %.16llx:%d\n",
-					 node_ptr, prefix->val, prefix->len);
-				/* relocate old leaf to new slot */
-				DBG("relocate L%d to N%d[%x]\taddr: %llx\n"
-					, val_ptr, node_ptr, k, old_addr);
-				node_add_leaf(&node_val->val[k], val_ptr);
-				node_val->val[i].leaf = 0;
-				node_val->val[i].used = 0;
-				set_skip(node_val, prefix->len);
-				/* go through loop again to add addr */
-				continue;
-			}
 			DBG("split leaf at N%d[%x]\n", node_ptr, i);
-
 			/* insert interim node, relocate old leaf there */
 			new_node = newnode(map, &new_ptr);
 			nprefix = get_node_prefix(map, new_ptr);
 			*nprefix = *prefix;
 			DBG("new N%d\n", new_ptr);
 
-			/* compare with path prefix */
+			/* get path prefix and skips for new node */
 			j = prefix_len(addr, old_addr, sizeof(addr));
 			set_prefix(nprefix, old_addr, j);
 			node_skip = j - (level + skip) - 1 /* for next level */ ;
 			set_skip(new_node, node_skip);
-			DBG("adjusted N%d prefix: 0x%.16llx:%d\n", new_ptr, nprefix->val, nprefix->len);
+			DBG("set N%d Nskip: %d prefix: 0x%.*llx:%d\n",
+			 new_ptr, node_skip, nprefix->len * 2,
+			 nprefix->val  >> (64 - RADIX_WIDTH_BITS * nprefix->len),
+			 nprefix->len);
 
 			/* relocate old leaf to new node reindexing it to new offset */
 			k = get_index(j, old_addr);
@@ -403,7 +424,7 @@ void dump_map(memmap_trie *map, int node_ptr)
 	node_val = get_node(map, node_ptr);
 	for (i =0; i < NODE_WITDH; i++) {
 		if (node_val->val[i].used) {
-			printf("%sN%d[%x]  skip: %d prefix: %.*llx:%d\n", in, node_ptr, i, node_val->val[i].skip, nprefix->len, nprefix->val >> (64 - RADIX_WIDTH_BITS * nprefix->len), nprefix->len);
+			printf("%sN%d[%x]  skip: %d prefix: %.*llx:%d\n", in, node_ptr, i, node_val->val[i].skip, nprefix->len * 2, nprefix->val >> (64 - RADIX_WIDTH_BITS * nprefix->len), nprefix->len);
 			if (node_val->val[i].leaf) {
 				vhost_memory_region *v =
 					get_val(map, node_val->val[i].ptr);
