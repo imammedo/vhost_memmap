@@ -162,10 +162,10 @@ void node_add_leaf(trie_node_value_t *node_val, int ptr)
 	node_val->ptr = ptr;
 }
 
-void replace_node(trie_node_value_t *node_val, int ptr)
+void replace_node(trie_node_value_t *node_val, int ptr, bool leaf)
 {
 	node_val->used = true;
-	node_val->leaf = false;
+	node_val->leaf = leaf;
 	node_val->ptr = ptr;
 }
 
@@ -216,7 +216,7 @@ void set_prefix(trie_prefix *prefix, uint64_t addr, int len)
 }
 
 //#define DBG(...)
-void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_ptr, int level)
+int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_ptr, int node_ptr, int level)
 {
 	trie_node *node_val;
 	int skip = 0;
@@ -233,7 +233,6 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 
 		/* path compression at root node */
 		if (!prefix->in_use) {
-			int val_ptr;
 			uint64_t old_addr;
 
 			/* find a leaf so we could try get common prefix */
@@ -271,21 +270,38 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 		/* lazy expand level if new common prefix is smaller than current */
 		j = prefix_len(addr, prefix->val, prefix->len);
 		if (j < prefix->len) { /* prefix mismatch */
-			/* copy current node to a new one */
-			new_node = newnode(map, &new_ptr);
-			nprefix = get_node_prefix(map, new_ptr);
-			memcpy(new_node, node_val, sizeof(*new_node));
-			*nprefix = *get_node_prefix(map, node_ptr);
-			set_skip(new_node,
-				new_node->val[0].skip - (j - (level + skip))
-				- 1 /* new level will consume 1 skip step */);
+			int k, n;
+
+			/* check that current node could be level compressed */
+			for (n = 0; n < NODE_WITDH; n++) /* find first used node */
+				if (node_val->val[n].used)
+					break;
+
+			for (k = 0; n < NODE_WITDH && k < NODE_WITDH; k++)
+				if (node_val->val[k].used &&
+				    node_val->val[k].ptr != node_val->val[n].ptr)
+					break;
+
+			if (k < NODE_WITDH) { /* level is not comressible */
+				/* copy current node to a new one */
+				new_node = newnode(map, &new_ptr);
+				nprefix = get_node_prefix(map, new_ptr);
+				memcpy(new_node, node_val, sizeof(*new_node));
+				*nprefix = *get_node_prefix(map, node_ptr);
+				set_skip(new_node,
+					new_node->val[0].skip - (j - (level + skip))
+					- 1 /* new level will consume 1 skip step */);
+			} else { /* all childs the same, compress level */
+				DBG("Do level compression of N%d\n", node_ptr);
+				new_ptr = node_val->val[0].ptr;
+			}
 
 			/* form new node in place of current */
 			memset(node_val, 0, sizeof(*node_val));
 			i = get_index(j, prefix->val);
 			set_prefix(prefix, prefix->val, j);
 			set_skip(node_val, j - (level + skip));
-			replace_node(&node_val->val[i], new_ptr);
+			replace_node(&node_val->val[i], new_ptr, k < NODE_WITDH ? 0 : 1);
 			DBG("Prefix mismatch, relocate N%d to N%d at N%d[%x]\n", node_ptr, new_ptr, node_ptr, i);
 			DBG("addjust prefix %.*llx:%d\n", prefix->len * 2,
 				prefix->val >> (64 - RADIX_WIDTH_BITS * prefix->len),
@@ -303,7 +319,7 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 			uint64_t old_addr;
 			int old_nskip;
 			int node_skip;
-			int val_ptr = node_val->val[i].ptr;
+			val_ptr = node_val->val[i].ptr;
 			vhost_memory_region *old_val = get_val(map, val_ptr);
 			old_addr = old_val->guest_phys_addr;
 
@@ -335,16 +351,17 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 			DBG("relocate L%d to N%d[%x]\taddr: %llx\n"
 			, val_ptr, new_ptr, k, old_addr);
 
-			replace_node(&node_val->val[i], new_ptr);
+			replace_node(&node_val->val[i], new_ptr, 0);
 			node_ptr = new_ptr;
 			/* fall to the next level and let 'addr' leaf be inserted */
 			level++; /* +1 for new level */
 		} else if (!node_val->val[i].used) {
-			int val_ptr = map->free_val_idx++;
-
-			*get_val(map, val_ptr) = *val;
+			if (val) {
+				val_ptr = map->free_val_idx++;
+				*get_val(map, val_ptr) = *val;
+			}
 			node_add_leaf(&node_val->val[i], val_ptr);
-			DBG("insert leaf\ti: %x\taddr: %llx\n", i, addr);
+			DBG("insert L%d at N%d[%x]\taddr: %llx\n", val_ptr, node_ptr, i, addr);
 			break;
 
 		} else { /* traverse tree */
@@ -353,6 +370,7 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 			level++;
 		}
 	} while (1);
+	return val_ptr;
 }
 
 void lookup(memmap_trie *map, uint64_t addr)
@@ -368,7 +386,7 @@ void lookup(memmap_trie *map, uint64_t addr)
 		node_val = get_node(map, node_ptr);
 		skip += node_val->val[0].skip;
 		i = get_index(level + skip, addr);
-		printf("N%d[%x] level: %d, skip: %d\n", node_ptr, i, level, skip);
+	//	printf("N%d[%x] level: %d, skip: %d\n", node_ptr, i, level, skip);
 		if (!node_val->val[i].used) {
 			break;
 		}
@@ -383,7 +401,7 @@ void lookup(memmap_trie *map, uint64_t addr)
 		v = get_val(map, node_val->val[i].ptr);
 		if ((addr >= v->guest_phys_addr) && (addr < (v->guest_phys_addr + v->memory_size))) {
 			printf("Found at N%d[%x]: ", node_ptr, i);
-			printf("L[%d]: a: %lx\n", node_val->val[i].ptr, v->guest_phys_addr);
+			printf("L%d: a: %.16llx\n", node_val->val[i].ptr, v->guest_phys_addr);
 			return;
 		}
 	}
@@ -456,8 +474,9 @@ int main(int argc, char **argv)
 	memmap_trie *map = create_memmap_trie();
 
 	for (i = 0; i < sizeof(vm)/sizeof(vm[0]); i++) {
+		int val_ptr = 0xff;
 		for (j = vm[i].guest_phys_addr; j < (vm[i].guest_phys_addr + vm[i].memory_size); j += PAGE_SIZE) {
-			insert(map, j, &vm[i], 0, 0);
+			val_ptr = insert(map, j, j == vm[i].guest_phys_addr ? &vm[i] : NULL, val_ptr, 0, 0);
 		}
 	}
 //	compress(map, 0);
@@ -466,6 +485,9 @@ int main(int argc, char **argv)
 	//printf("---\n");
         lookup(map, 0);
         lookup(map, 1);
+        lookup(map, 0x10000 >> 1);
+        lookup(map, 0x1000);
+        lookup(map, 0x10001);
         lookup(map, 0xaabb020200000004);
         //lookup(map, 0xd0000);
 }
