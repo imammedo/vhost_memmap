@@ -194,7 +194,7 @@ void set_prefix(trie_prefix *prefix, uint64_t addr, int len)
 	prefix->len = len;
 }
 
-//#define DBG(...)
+#define DBG(...)
 int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_ptr, int node_ptr, int level)
 {
 	trie_node *node_val;
@@ -202,7 +202,7 @@ int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_pt
 
 	DBG("=== addr: 0x%llx\tval: %p\n", addr, val);
 	do {
-		unsigned i, k, j;
+		unsigned i, k, j, n;
 		trie_prefix *nprefix;
 		trie_node *new_node;
 		int new_ptr;
@@ -249,8 +249,6 @@ int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_pt
 		/* lazy expand level if new common prefix is smaller than current */
 		j = prefix_len(addr, prefix->val, prefix->len);
 		if (j < prefix->len) { /* prefix mismatch */
-			int k, n;
-
 			/* check that current node could be level compressed */
 			for (n = 0; n < NODE_WITDH; n++) /* find first used node */
 				if (node_val->val[n].used)
@@ -299,16 +297,16 @@ int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_pt
 			 prefix->val >> (64 - RADIX_WIDTH_BITS * prefix->len),
 			 prefix->len, node_val->val[0].skip);
 		if (node_val->val[i].leaf) {
-			uint64_t old_addr;
+			uint64_t old_addr, end_addr;
 			int old_nskip;
 			int node_skip;
 			val_ptr = node_val->val[i].ptr;
 			vhost_memory_region *old_val = get_val(map, val_ptr);
 			old_addr = old_val->guest_phys_addr;
+			end_addr = old_val->guest_phys_addr + old_val->memory_size;
 
 			/* do not expand if addr matches to leaf */
-			if ((addr >= old_val->guest_phys_addr) &&
-			    (addr < (old_val->guest_phys_addr + old_val->memory_size)))
+			if (addr >= old_val->guest_phys_addr && addr < end_addr)
 				break;
 
 			DBG("split leaf at N%d[%x]\n", node_ptr, i);
@@ -329,10 +327,14 @@ int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_pt
 			 nprefix->len);
 
 			/* relocate old leaf to new node reindexing it to new offset */
-			k = get_index(j, old_addr);
-			node_add_leaf(&new_node->val[k], val_ptr);
-			DBG("relocate L%d to N%d[%x]\taddr: %llx\n"
-			, val_ptr, new_ptr, k, old_addr);
+			for (; old_addr < end_addr; old_addr++) {
+				k = get_index(j, old_addr);
+				if (!new_node->val[k].used) {
+					node_add_leaf(&new_node->val[k], val_ptr);
+					DBG("relocate L%d to N%d[%x]\taddr: %llx\n"
+							, val_ptr, new_ptr, k, old_addr);
+				}
+			}
 
 			replace_node(&node_val->val[i], new_ptr, 0);
 			node_ptr = new_ptr;
@@ -465,7 +467,7 @@ vhost_memory_region vm[] = {
 { 0x0000000000000001, 0x10000, 0x7fe3b0000000 },
 { 0xaabb010000000003, 0x10000, 0x7fe3b0000000 },
 { 0xaabb020300000004, 0x10, 0x7fe3b0000000 },
-//{ 0xaabb020300000015, 0x10000, 0x7fe3b0000000 },
+{ 0xaabb020300000015, 0x10000, 0x7fe3b0000000 },
 //{ 0xaabb02103000cc05, 0x10000, 0x7fe3b0000000 },
 //{ 0xaabb02103000cc06, 0x10000, 0x7fe3b0000000 },
 //{ 0xaabb011000000006, 0x10000, 0x7fe3b0000000 },
@@ -481,8 +483,8 @@ int main(int argc, char **argv)
 
 	for (i = 0; i < sizeof(vm)/sizeof(vm[0]); i++) {
 		int val_ptr = 0xff;
-		for (j = vm[i].guest_phys_addr; j == vm[i].guest_phys_addr; j += PAGE_SIZE) {
-	//	for (j = vm[i].guest_phys_addr; j < (vm[i].guest_phys_addr + vm[i].memory_size); j += PAGE_SIZE) {
+	//	for (j = vm[i].guest_phys_addr; j == vm[i].guest_phys_addr; j += PAGE_SIZE) {
+		for (j = vm[i].guest_phys_addr; j < (vm[i].guest_phys_addr + vm[i].memory_size); j += 1) {
 			val_ptr = insert(map, j, j == vm[i].guest_phys_addr ? &vm[i] : NULL, val_ptr, 0, 0);
 		}
 	}
