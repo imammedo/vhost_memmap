@@ -21,13 +21,13 @@ vhost_memory_region vm[] = {
 //{ 0x0fc054000, 0x2000, 0x7fe3fd600000 }
 { 0xaabb020000000001, 0x10000, 0x7fe3b0000000 },
 { 0x0000000000000001, 0x10000, 0x7fe3b0000000 },
-{ 0xaabb021000000002, 0x10000, 0x7fe3b0000000 },
+//{ 0xaabb021000000002, 0x10000, 0x7fe3b0000000 },
 { 0xaabb010000000003, 0x10000, 0x7fe3b0000000 },
 { 0xaabb020200000004, 0x10000, 0x7fe3b0000000 },
-{ 0xaabb02103000cc05, 0x10000, 0x7fe3b0000000 },
-{ 0xaabb02103000cc06, 0x10000, 0x7fe3b0000000 },
-{ 0xaabb011000000006, 0x10000, 0x7fe3b0000000 },
-{ 0xaabb041000000007, 0x10000, 0x7fe3b0000000 },
+//{ 0xaabb02103000cc05, 0x10000, 0x7fe3b0000000 },
+//{ 0xaabb02103000cc06, 0x10000, 0x7fe3b0000000 },
+//{ 0xaabb011000000006, 0x10000, 0x7fe3b0000000 },
+//{ 0xaabb041000000007, 0x10000, 0x7fe3b0000000 },
 { 0x00000000dd000000, 0x10000, 0x7fe3b0000000 },
 };
 
@@ -355,16 +355,17 @@ void lookup(memmap_trie *map, uint64_t addr)
 	vhost_memory_region *v;
 	trie_node *node_val;
 	int node_ptr = 0;
-	int level = 1;
+	int level = 0, skip = 0;
 	unsigned i;
 
+	printf("Addr: 0x%.16llx\n", addr);
 	do {
-		i = get_index(level, addr);
-		printf("addr: %llx, i: %x, level: %d\n", addr, i, level);
 		node_val = get_node(map, node_ptr);
+		skip += node_val->val[0].skip;
+		i = get_index(level + skip, addr);
+		printf("N%d[%x] level: %d, skip: %d\n", node_ptr, i, level, skip);
 		if (!node_val->val[i].used) {
-			printf("Lookup: %llx -> notfound at %x\n", addr, i);
-			return;
+			break;
 		}
 		if (!node_val->val[i].leaf) {
 			node_ptr = node_val->val[i].ptr;
@@ -373,11 +374,15 @@ void lookup(memmap_trie *map, uint64_t addr)
 		}
 		break;
 	} while (1);
-	printf("Lookup: %llx -> N[%d]: ", addr, node_ptr, node_val->val[i].skip);
 	if (node_val->val[i].leaf) {
 		v = get_val(map, node_val->val[i].ptr);
-		printf("L[%d]: a: %lx\n", node_val->val[i].ptr, v->guest_phys_addr);
+		if ((addr >= v->guest_phys_addr) && (addr < (v->guest_phys_addr + v->memory_size))) {
+			printf("Found at N%d[%x]: ", node_ptr, i);
+			printf("L[%d]: a: %lx\n", node_val->val[i].ptr, v->guest_phys_addr);
+			return;
+		}
 	}
+	printf("notfound at N%d[%x]\n", node_ptr, i);
 }
 
 void compress(memmap_trie *map, int node_ptr)
@@ -452,6 +457,8 @@ int main(int argc, char **argv)
 
         dump_map(map, 0);
 	//printf("---\n");
-        //lookup(map, 0);
+        lookup(map, 0);
+        lookup(map, 1);
+        lookup(map, 0xaabb020200000004);
         //lookup(map, 0xd0000);
 }
