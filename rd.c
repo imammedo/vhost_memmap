@@ -307,6 +307,11 @@ void insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int node_
 			vhost_memory_region *old_val = get_val(map, val_ptr);
 			old_addr = old_val->guest_phys_addr;
 
+			/* do not expand if addr matches to leaf */
+			if ((addr >= old_val->guest_phys_addr) &&
+			    (addr < (old_val->guest_phys_addr + old_val->memory_size)))
+				break;
+
 			DBG("split leaf at N%d[%x]\n", node_ptr, i);
 			/* insert interim node, relocate old leaf there */
 			new_node = newnode(map, &new_ptr);
@@ -447,11 +452,13 @@ void dump_map(memmap_trie *map, int node_ptr)
 int main(int argc, char **argv)
 {
 	int i;
+	uint64_t j;
 	memmap_trie *map = create_memmap_trie();
 
 	for (i = 0; i < sizeof(vm)/sizeof(vm[0]); i++) {
-		insert(map, vm[i].guest_phys_addr, &vm[i], 0, 0);
-       // 	dump_map(map, 0);
+		for (j = vm[i].guest_phys_addr; j < (vm[i].guest_phys_addr + vm[i].memory_size); j += PAGE_SIZE) {
+			insert(map, j, &vm[i], 0, 0);
+		}
 	}
 //	compress(map, 0);
 
