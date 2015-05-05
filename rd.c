@@ -10,27 +10,6 @@ typedef struct vhost_memory_region {
         uint64_t userspace_addr;
 } vhost_memory_region;
 
-vhost_memory_region vm[] = {
-//{ 0x200000000, 0x40000000, 0x7fe3b0000000 },
-//{ 0x400000000, 0x40000000, 0x7fe3b0000000 },
-//{ 0x000000000, 0x2000, 0x7fe2f0000000 },
-//{ 0x0000c0000, 0x00100000, 0x7fe2f00c0000 },
-//{ 0x0fffc0000, 0x2000, 0x7fe3fdc00000 },
-//{ 0x100000000, 0x10000, 0x7fe3b0000000 },
-//{ 0x0f8000000, 0x4000000, 0x7fe2e8000000 },
-//{ 0x0fc054000, 0x2000, 0x7fe3fd600000 }
-{ 0xaabb020000000001, 0x10000, 0x7fe3b0000000 },
-{ 0x0000000000000001, 0x10000, 0x7fe3b0000000 },
-//{ 0xaabb021000000002, 0x10000, 0x7fe3b0000000 },
-{ 0xaabb010000000003, 0x10000, 0x7fe3b0000000 },
-{ 0xaabb020200000004, 0x10000, 0x7fe3b0000000 },
-//{ 0xaabb02103000cc05, 0x10000, 0x7fe3b0000000 },
-//{ 0xaabb02103000cc06, 0x10000, 0x7fe3b0000000 },
-//{ 0xaabb011000000006, 0x10000, 0x7fe3b0000000 },
-//{ 0xaabb041000000007, 0x10000, 0x7fe3b0000000 },
-{ 0x00000000dd000000, 0x10000, 0x7fe3b0000000 },
-};
-
 #define PAGE_SHIFT 12
 #define PAGE_SIZE (1U << 12)
 #define VHOST_PHYS_USED_BITS 44
@@ -38,8 +17,8 @@ vhost_memory_region vm[] = {
 typedef struct {
 	uint16_t leaf: 1;
 	uint16_t used: 1;
-	uint16_t skip: 3;
-	uint16_t rsvd: 4;
+	uint16_t skip: 4;
+	uint16_t rsvd: 3;
 	uint16_t ptr:  8;
 } trie_node_value_t;
 
@@ -291,6 +270,10 @@ int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_pt
 				set_skip(new_node,
 					new_node->val[0].skip - (j - (level + skip))
 					- 1 /* new level will consume 1 skip step */);
+				DBG("new N%d prefix %.*llx:%d skip: %d\n", new_ptr,
+					nprefix->len * 2,
+					nprefix->val >> (64 - RADIX_WIDTH_BITS * nprefix->len),
+					nprefix->len, new_node->val[0].skip);
 			} else { /* all childs the same, compress level */
 				DBG("Do level compression of N%d\n", node_ptr);
 				new_ptr = node_val->val[0].ptr;
@@ -401,7 +384,8 @@ void lookup(memmap_trie *map, uint64_t addr)
 		v = get_val(map, node_val->val[i].ptr);
 		if ((addr >= v->guest_phys_addr) && (addr < (v->guest_phys_addr + v->memory_size))) {
 			printf("Found at N%d[%x]: ", node_ptr, i);
-			printf("L%d: a: %.16llx\n", node_val->val[i].ptr, v->guest_phys_addr);
+			printf("L%d: a: %.16llx : %.16llx\n", node_val->val[i].ptr,
+				 v->guest_phys_addr, v->guest_phys_addr + v->memory_size - 1);
 			return;
 		}
 	}
@@ -467,6 +451,28 @@ void dump_map(memmap_trie *map, int node_ptr)
         ident--;
 }
 
+vhost_memory_region vm[] = {
+//{ 0x200000000, 0x40000000, 0x7fe3b0000000 },
+//{ 0x400000000, 0x40000000, 0x7fe3b0000000 },
+//{ 0x000000000, 0x2000, 0x7fe2f0000000 },
+//{ 0x0000c0000, 0x00100000, 0x7fe2f00c0000 },
+//{ 0x0fffc0000, 0x2000, 0x7fe3fdc00000 },
+//{ 0x100000000, 0x10000, 0x7fe3b0000000 },
+//{ 0x0f8000000, 0x4000000, 0x7fe2e8000000 },
+//{ 0x0fc054000, 0x2000, 0x7fe3fd600000 }
+{ 0xaabb020000000001, 0x10000, 0x7fe3b0000000 },
+{ 0xaabb021000000002, 0x10000, 0x7fe3b0000000 },
+{ 0x0000000000000001, 0x10000, 0x7fe3b0000000 },
+{ 0xaabb010000000003, 0x10000, 0x7fe3b0000000 },
+{ 0xaabb020300000004, 0x10, 0x7fe3b0000000 },
+//{ 0xaabb020300000015, 0x10000, 0x7fe3b0000000 },
+//{ 0xaabb02103000cc05, 0x10000, 0x7fe3b0000000 },
+//{ 0xaabb02103000cc06, 0x10000, 0x7fe3b0000000 },
+//{ 0xaabb011000000006, 0x10000, 0x7fe3b0000000 },
+//{ 0xaabb041000000007, 0x10000, 0x7fe3b0000000 },
+{ 0x00000000dd000000, 0x10000, 0x7fe3b0000000 },
+};
+
 int main(int argc, char **argv)
 {
 	int i;
@@ -475,7 +481,8 @@ int main(int argc, char **argv)
 
 	for (i = 0; i < sizeof(vm)/sizeof(vm[0]); i++) {
 		int val_ptr = 0xff;
-		for (j = vm[i].guest_phys_addr; j < (vm[i].guest_phys_addr + vm[i].memory_size); j += PAGE_SIZE) {
+		for (j = vm[i].guest_phys_addr; j == vm[i].guest_phys_addr; j += PAGE_SIZE) {
+	//	for (j = vm[i].guest_phys_addr; j < (vm[i].guest_phys_addr + vm[i].memory_size); j += PAGE_SIZE) {
 			val_ptr = insert(map, j, j == vm[i].guest_phys_addr ? &vm[i] : NULL, val_ptr, 0, 0);
 		}
 	}
@@ -488,6 +495,6 @@ int main(int argc, char **argv)
         lookup(map, 0x10000 >> 1);
         lookup(map, 0x1000);
         lookup(map, 0x10001);
-        lookup(map, 0xaabb020200000004);
+        lookup(map, 0xaabb020300000004);
         //lookup(map, 0xd0000);
 }
