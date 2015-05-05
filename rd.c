@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 
 typedef struct vhost_memory_region {
         uint64_t guest_phys_addr;
@@ -358,7 +359,7 @@ int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_pt
 	return val_ptr;
 }
 
-void lookup(memmap_trie *map, uint64_t addr)
+vhost_memory_region *lookup(memmap_trie *map, uint64_t addr)
 {
 	vhost_memory_region *v;
 	trie_node *node_val;
@@ -366,7 +367,7 @@ void lookup(memmap_trie *map, uint64_t addr)
 	int level = 0, skip = 0;
 	unsigned i;
 
-	printf("Addr: 0x%.16llx\n", addr);
+//	printf("Addr: 0x%.16llx\n", addr);
 	do {
 		node_val = get_node(map, node_ptr);
 		skip += node_val->val[0].skip;
@@ -385,13 +386,14 @@ void lookup(memmap_trie *map, uint64_t addr)
 	if (node_val->val[i].leaf) {
 		v = get_val(map, node_val->val[i].ptr);
 		if ((addr >= v->guest_phys_addr) && (addr < (v->guest_phys_addr + v->memory_size))) {
-			printf("Found at N%d[%x]: ", node_ptr, i);
-			printf("L%d: a: %.16llx : %.16llx\n", node_val->val[i].ptr,
-				 v->guest_phys_addr, v->guest_phys_addr + v->memory_size - 1);
-			return;
+//			printf("Found at N%d[%x]: ", node_ptr, i);
+//			printf("L%d: a: %.16llx : %.16llx\n", node_val->val[i].ptr,
+//				 v->guest_phys_addr, v->guest_phys_addr + v->memory_size - 1);
+			return v;
 		}
 	}
 	printf("notfound at N%d[%x]\n", node_ptr, i);
+	return NULL;
 }
 
 void compress(memmap_trie *map, int node_ptr)
@@ -475,6 +477,16 @@ vhost_memory_region vm[] = {
 { 0x00000000dd000000, 0x10000, 0x7fe3b0000000 },
 };
 
+void test_lookup(memmap_trie *map, vhost_memory_region *vm, int vm_count)
+{
+	int i;
+	for (i = 0; i < vm_count; i++) {
+        	assert(lookup(map, vm[i].guest_phys_addr));
+        	assert(lookup(map, vm[i].guest_phys_addr + (vm[i].memory_size >> 1)));
+        	assert(lookup(map, vm[i].guest_phys_addr + vm[i].memory_size - 1));
+	}
+}
+
 int main(int argc, char **argv)
 {
 	int i;
@@ -492,11 +504,12 @@ int main(int argc, char **argv)
 
         dump_map(map, 0);
 	//printf("---\n");
-        lookup(map, 0);
-        lookup(map, 1);
-        lookup(map, 0x10000 >> 1);
-        lookup(map, 0x1000);
-        lookup(map, 0x10001);
-        lookup(map, 0xaabb020300000004);
+//        lookup(map, 0);
+//        lookup(map, 1);
+//        lookup(map, 0x10000 >> 1);
+//        lookup(map, 0x1000);
+//        lookup(map, 0x10001);
+//        lookup(map, 0xaabb020300000004);
         //lookup(map, 0xd0000);
+        test_lookup(map, vm, sizeof(vm)/sizeof(vm[0]));
 }
