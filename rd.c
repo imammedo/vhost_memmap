@@ -9,6 +9,7 @@ typedef struct vhost_memory_region {
         uint64_t guest_phys_addr;
         uint64_t memory_size;
         uint64_t userspace_addr;
+        uint64_t gpa_end;
 } vhost_memory_region;
 
 #define PAGE_SHIFT 12
@@ -355,6 +356,7 @@ int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_pt
 		} else if (!node_val->val[i].used) {
 			if (val) {
 				val_ptr = map->free_val_idx++;
+				val->gpa_end = val->guest_phys_addr + val->memory_size;
 				*get_val(map, val_ptr) = *val;
 			}
 			node_add_leaf(&node_val->val[i], val_ptr);
@@ -389,7 +391,7 @@ vhost_memory_region *lookup(memmap_trie *map, uint64_t addr)
 		if (node_val->val[i].leaf) {
 			v = val_fetch(map, node_val->val[i].ptr);
 			if ((addr >= v->guest_phys_addr) &&
-			    (addr < (v->guest_phys_addr + v->memory_size)))
+			    (addr < (v->gpa_end)))
 				return v;
 			break;
 		}
