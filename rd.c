@@ -88,12 +88,18 @@ bool is_node_allocated(memmap_trie *map, int node_ptr)
 	return true;
 }
 
+inline trie_node *node_fetch(memmap_trie *map, int node_ptr)
+{
+	return &map->lookup_tables[LOOKUP_IDX(node_ptr)][NODE_IDX(node_ptr)];
+}
+
+
 trie_node *get_node(memmap_trie *map, int node_ptr)
 {
 	if (!is_node_allocated(map, node_ptr))
 		return alloc_node(map, node_ptr);
 
-	return &map->lookup_tables[LOOKUP_IDX(node_ptr)][NODE_IDX(node_ptr)];
+	return node_fetch(map, node_ptr);
 }
 
 trie_prefix *get_node_prefix(memmap_trie *map, int node_ptr)
@@ -125,12 +131,17 @@ bool is_val_allocated(memmap_trie *map, int ptr)
 	return map->val_tables[tbl_idx][VAL_IDX(ptr)].memory_size;
 }
 
+inline vhost_memory_region *val_fetch(memmap_trie *map, int ptr)
+{
+	return &map->val_tables[VAL_TBL_IDX(ptr)][VAL_IDX(ptr)];
+}
+
 vhost_memory_region *get_val(memmap_trie *map, int ptr)
 {
 	if (!is_val_allocated(map, ptr))
 		return alloc_val(map, ptr);
 
-	return &map->val_tables[VAL_TBL_IDX(ptr)][VAL_IDX(ptr)];
+	return val_fetch(map, ptr);
 }
 
 #define DBG(fmt, ...) printf("%-*d  " fmt, level * 3, level,  __VA_ARGS__)
@@ -367,31 +378,24 @@ vhost_memory_region *lookup(memmap_trie *map, uint64_t addr)
 	int level = 0, skip = 0;
 	unsigned i;
 
-//	printf("Addr: 0x%.16llx\n", addr);
 	do {
-		node_val = get_node(map, node_ptr);
+		node_val = node_fetch(map, node_ptr);
 		skip += node_val->val[0].skip;
 		i = get_index(level + skip, addr);
-	//	printf("N%d[%x] level: %d, skip: %d\n", node_ptr, i, level, skip);
+
 		if (!node_val->val[i].used) {
 			break;
 		}
-		if (!node_val->val[i].leaf) {
-			node_ptr = node_val->val[i].ptr;
-			level++;
-			continue;
+		if (node_val->val[i].leaf) {
+			v = val_fetch(map, node_val->val[i].ptr);
+			if ((addr >= v->guest_phys_addr) &&
+			    (addr < (v->guest_phys_addr + v->memory_size)))
+				return v;
+			break;
 		}
-		break;
+		node_ptr = node_val->val[i].ptr;
+		level++;
 	} while (1);
-	if (node_val->val[i].leaf) {
-		v = get_val(map, node_val->val[i].ptr);
-		if ((addr >= v->guest_phys_addr) && (addr < (v->guest_phys_addr + v->memory_size))) {
-//			printf("Found at N%d[%x]: ", node_ptr, i);
-//			printf("L%d: a: %.16llx : %.16llx\n", node_val->val[i].ptr,
-//				 v->guest_phys_addr, v->guest_phys_addr + v->memory_size - 1);
-			return v;
-		}
-	}
 	printf("notfound at N%d[%x]\n", node_ptr, i);
 	return NULL;
 }
@@ -455,15 +459,43 @@ void dump_map(memmap_trie *map, int node_ptr)
         ident--;
 }
 
-vhost_memory_region vm[] = {
-//{ 0x200000000, 0x40000000, 0x7fe3b0000000 },
-//{ 0x400000000, 0x40000000, 0x7fe3b0000000 },
-//{ 0x000000000, 0x2000, 0x7fe2f0000000 },
-//{ 0x0000c0000, 0x00100000, 0x7fe2f00c0000 },
-//{ 0x0fffc0000, 0x2000, 0x7fe3fdc00000 },
-//{ 0x100000000, 0x10000, 0x7fe3b0000000 },
-//{ 0x0f8000000, 0x4000000, 0x7fe2e8000000 },
-//{ 0x0fc054000, 0x2000, 0x7fe3fd600000 }
+void test_lookup(memmap_trie *map, vhost_memory_region *vm, int vm_count, uint64_t step)
+{
+	int i;
+	
+	step = step ? step : 1;
+	for (i = 0; i < vm_count; i++) {
+		uint64_t addr, end;
+
+		end = vm[i].guest_phys_addr + vm[i].memory_size;
+		for (addr = vm[i].guest_phys_addr; addr < end; addr += step) {
+        		assert(lookup(map, addr));
+		}
+	}
+}
+
+void test_vhost_memory_array(vhost_memory_region *vm, int vm_count, uint64_t step)
+{
+	int i;
+	memmap_trie *map = create_memmap_trie();
+
+	printf("\n\n\ntest_vhost_memory_array:\n\n");
+	for (i = 0; i < vm_count; i++) {
+		uint64_t j, end;
+		int val_ptr = 0xff;
+		
+		end = vm[i].guest_phys_addr + vm[i].memory_size;
+		for (j = vm[i].guest_phys_addr; j < end; j += step) {
+			bool start = j == vm[i].guest_phys_addr;
+			val_ptr = insert(map, j, start ? &vm[i] : NULL, val_ptr, 0, 0);
+		}
+	}
+
+//        dump_map(map, 0);
+        test_lookup(map, vm, vm_count, 10);
+}
+
+vhost_memory_region vm1[] = {
 { 0xaabb020000000001, 0x10000, 0x7fe3b0000000 },
 { 0xaabb021000000002, 0x10000, 0x7fe3b0000000 },
 { 0x0000000000000001, 0x10000, 0x7fe3b0000000 },
@@ -477,39 +509,24 @@ vhost_memory_region vm[] = {
 { 0x00000000dd000000, 0x10000, 0x7fe3b0000000 },
 };
 
-void test_lookup(memmap_trie *map, vhost_memory_region *vm, int vm_count)
-{
-	int i;
-	for (i = 0; i < vm_count; i++) {
-        	assert(lookup(map, vm[i].guest_phys_addr));
-        	assert(lookup(map, vm[i].guest_phys_addr + (vm[i].memory_size >> 1)));
-        	assert(lookup(map, vm[i].guest_phys_addr + vm[i].memory_size - 1));
-	}
-}
+vhost_memory_region vm2[] = {
+{ 0x000000000, 0xa0000, 0x7fe2f0000000 },
+{ 0x200000000, 0x40000000, 0x7fe3b0000000 },
+{ 0x400000000, 0x40000000, 0x7fe3b0000000 },
+{ 0x0000c0000, 0x00100000, 0x7fe2f00c0000 },
+{ 0x0fffc0000, 0x2000, 0x7fe3fdc00000 },
+{ 0x100000000, 0x10000, 0x7fe3b0000000 },
+{ 0x0f8000000, 0x4000000, 0x7fe2e8000000 },
+{ 0x0fc054000, 0x2000, 0x7fe3fd600000 }
+};
+
+
+
+#define ARRAY_SIZE(a) (sizeof(a)/sizeof(a[0]))
 
 int main(int argc, char **argv)
 {
-	int i;
-	uint64_t j;
-	memmap_trie *map = create_memmap_trie();
-
-	for (i = 0; i < sizeof(vm)/sizeof(vm[0]); i++) {
-		int val_ptr = 0xff;
-	//	for (j = vm[i].guest_phys_addr; j == vm[i].guest_phys_addr; j += PAGE_SIZE) {
-		for (j = vm[i].guest_phys_addr; j < (vm[i].guest_phys_addr + vm[i].memory_size); j += 1) {
-			val_ptr = insert(map, j, j == vm[i].guest_phys_addr ? &vm[i] : NULL, val_ptr, 0, 0);
-		}
-	}
-//	compress(map, 0);
-
-        dump_map(map, 0);
-	//printf("---\n");
-//        lookup(map, 0);
-//        lookup(map, 1);
-//        lookup(map, 0x10000 >> 1);
-//        lookup(map, 0x1000);
-//        lookup(map, 0x10001);
-//        lookup(map, 0xaabb020300000004);
-        //lookup(map, 0xd0000);
-        test_lookup(map, vm, sizeof(vm)/sizeof(vm[0]));
+	test_vhost_memory_array(vm1, ARRAY_SIZE(vm1), 1);
+	test_vhost_memory_array(vm2, ARRAY_SIZE(vm2), PAGE_SIZE);
+	return 0;
 }
