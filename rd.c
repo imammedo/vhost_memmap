@@ -372,33 +372,38 @@ int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_pt
 	return val_ptr;
 }
 
+#define unlikely(x)     __builtin_expect(!!(x), 0)
+#define likely(x)     __builtin_expect(!!(x), 1)
+
 vhost_memory_region *lookup(memmap_trie *map, uint64_t addr)
 {
 	vhost_memory_region *v;
-	trie_node *node_val;
+	trie_node *node;
+	trie_node_value_t node_val;
+	int val_ptr;
 	int node_ptr = 0;
 	int level = 0, skip = 0;
 	unsigned i;
 
 	do {
-		node_val = node_fetch(map, node_ptr);
-		skip += node_val->val[0].skip;
+		node = node_fetch(map, node_ptr);
+		skip += node->val[0].skip;
 		i = get_index(level + skip, addr);
+		node_val = node->val[i];
 
-		if (!node_val->val[i].used) {
-			break;
-		}
-		if (node_val->val[i].leaf) {
-			v = val_fetch(map, node_val->val[i].ptr);
-			if ((addr >= v->guest_phys_addr) &&
-			    (addr < (v->gpa_end)))
+		if (node_val.leaf) {
+			val_ptr = node_val.ptr;
+			v = val_fetch(map, val_ptr);
+			if (likely((addr >= v->guest_phys_addr) && (addr < (v->gpa_end))))
 				return v;
 			break;
 		}
-		node_ptr = node_val->val[i].ptr;
+		if (!node_val.used)
+			break;
+
+		node_ptr = node_val.ptr;
 		level++;
 	} while (1);
-	printf("notfound at N%d[%x]\n", node_ptr, i);
 	return NULL;
 }
 
