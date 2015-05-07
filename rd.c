@@ -27,6 +27,7 @@ typedef struct {
 	uint16_t skip: 4;
 	uint16_t rsvd: 3;
 	uint16_t ptr:  8;
+	uint16_t pad;
 } trie_node_value_t __attribute__((aligned (4)));
 
 #define RADIX_WIDTH_BITS   8
@@ -397,7 +398,6 @@ const vhost_memory_region *lookup(memmap_trie *map, const uint64_t addr)
 {
 	const vhost_memory_region *v;
 	const trie_node *node;
-	int val_ptr;
 	int node_ptr = 0;
 	int level = 0, skip = 0;
 	unsigned i;
@@ -412,8 +412,7 @@ const vhost_memory_region *lookup(memmap_trie *map, const uint64_t addr)
 
 	if (!node_ptr) return NULL;
 
-	val_ptr = node->val[i].ptr;
-	v = val_fetch(map, val_ptr);
+	v = val_fetch(map, node_ptr);
 	if ((v->guest_phys_addr > addr) && (v->gpa_end <= addr))
 		return NULL;
 
