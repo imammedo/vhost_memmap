@@ -10,7 +10,7 @@ typedef struct vhost_memory_region {
         uint64_t memory_size;
         uint64_t userspace_addr;
         uint64_t gpa_end;
-} vhost_memory_region;
+} vhost_memory_region __attribute__((aligned (32)));
 
 struct vhost_memory {
         uint32_t nregions;
@@ -23,7 +23,7 @@ struct vhost_memory {
 #define VHOST_PHYS_USED_BITS 44
 
 typedef struct {
-	uint16_t leaf: 1;
+	uint16_t not_leaf: 1;
 	uint16_t used: 1;
 	uint16_t skip: 4;
 	uint16_t rsvd: 3;
@@ -66,6 +66,7 @@ memmap_trie *create_memmap_trie()
 	memmap_trie *map = malloc(sizeof(*map));
 	memset(map, 0, sizeof(*map));
 	map->free_node_idx = 0;
+	map->free_val_idx = 1;
 	return map;
 }
 
@@ -95,7 +96,7 @@ bool is_node_allocated(memmap_trie *map, int node_ptr)
 	return true;
 }
 
-inline trie_node *node_fetch(memmap_trie *map, int node_ptr)
+inline const trie_node *node_fetch(const memmap_trie *map, const int node_ptr)
 {
 	return &map->lookup_tables[LOOKUP_IDX(node_ptr)][NODE_IDX(node_ptr)];
 }
@@ -106,7 +107,7 @@ trie_node *get_node(memmap_trie *map, int node_ptr)
 	if (!is_node_allocated(map, node_ptr))
 		return alloc_node(map, node_ptr);
 
-	return node_fetch(map, node_ptr);
+	return (trie_node *)node_fetch(map, node_ptr);
 }
 
 trie_prefix *get_node_prefix(memmap_trie *map, int node_ptr)
@@ -138,7 +139,7 @@ bool is_val_allocated(memmap_trie *map, int ptr)
 	return map->val_tables[tbl_idx][VAL_IDX(ptr)].memory_size;
 }
 
-inline vhost_memory_region *val_fetch(memmap_trie *map, int ptr)
+inline const vhost_memory_region *val_fetch(const memmap_trie *map, const int ptr)
 {
 	return &map->val_tables[VAL_TBL_IDX(ptr)][VAL_IDX(ptr)];
 }
@@ -148,7 +149,7 @@ vhost_memory_region *get_val(memmap_trie *map, int ptr)
 	if (!is_val_allocated(map, ptr))
 		return alloc_val(map, ptr);
 
-	return val_fetch(map, ptr);
+	return (vhost_memory_region *)val_fetch(map, ptr);
 }
 
 #define DBG(fmt, ...) printf("%-*d  " fmt, level * 3, level,  __VA_ARGS__)
@@ -156,14 +157,14 @@ vhost_memory_region *get_val(memmap_trie *map, int ptr)
 void node_add_leaf(trie_node_value_t *node_val, int ptr)
 {
 	node_val->used = true;
-	node_val->leaf = true;
+	node_val->not_leaf = false;
 	node_val->ptr = ptr;
 }
 
 void replace_node(trie_node_value_t *node_val, int ptr, bool leaf)
 {
 	node_val->used = true;
-	node_val->leaf = leaf;
+	node_val->not_leaf = !leaf;
 	node_val->ptr = ptr;
 }
 
@@ -174,7 +175,7 @@ trie_node * newnode(memmap_trie *map, int *new_ptr)
 	return get_node(map, *new_ptr);
 }
 
-uint64_t get_index(int level, uint64_t addr)
+inline const uint64_t get_index(const int level, const uint64_t addr)
 {
 	int lvl_shift = 64 - RADIX_WIDTH_BITS * (level + 1);
 	return (addr >> lvl_shift) & (NODE_WITDH - 1);
@@ -236,7 +237,7 @@ int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_pt
 
 			/* find a leaf so we could try get common prefix */
 			for (i = 0; i < NODE_WITDH; i++)
-				if (node_val->val[i].leaf)
+				if (!node_val->val[i].not_leaf && node_val->val[i].ptr)
 					break;
 
 			if (i < NODE_WITDH) { /* have leaf to compare */
@@ -257,7 +258,7 @@ int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_pt
 						node_ptr, prefix->val, prefix->len);
 					/* relocate old leaf to new slot */
 					node_add_leaf(&node_val->val[k], val_ptr);
-					node_val->val[i].leaf = 0;
+					node_val->val[i].not_leaf = true;
 					node_val->val[i].used = 0;
 					DBG("relocate L%d to N%d[%x]\taddr: %llx\n",
 						val_ptr, node_ptr, k, old_addr);
@@ -316,7 +317,7 @@ int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_pt
 		DBG("N%d prefix: %.*llx:%d Nskip: %d\n", node_ptr, prefix->len * 2,
 			 prefix->val >> (64 - RADIX_WIDTH_BITS * prefix->len),
 			 prefix->len, node_val->val[0].skip);
-		if (node_val->val[i].leaf) {
+		if (!node_val->val[i].not_leaf && node_val->val[i].ptr) {
 			uint64_t old_addr, end_addr;
 			int old_nskip;
 			int node_skip;
@@ -389,33 +390,28 @@ int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_pt
 
 vhost_memory_region *lookup(memmap_trie *map, uint64_t addr)
 {
-	vhost_memory_region *v;
 	trie_node *node;
-	trie_node_value_t node_val;
-	int val_ptr;
 	int node_ptr = 0;
 	int level = 0, skip = 0;
 	unsigned i;
 
 	do {
+
 		node = node_fetch(map, node_ptr);
 		skip += node->val[0].skip;
 		i = get_index(level + skip, addr);
-		node_val = node->val[i];
-
-		if (node_val.leaf) {
-			val_ptr = node_val.ptr;
-			v = val_fetch(map, val_ptr);
-			if (likely((addr >= v->guest_phys_addr) && (addr < (v->gpa_end))))
-				return v;
-			break;
-		}
-		if (!node_val.used)
-			break;
-
-		node_ptr = node_val.ptr;
+		node_ptr = node->val[i].ptr;
 		level++;
-	} while (1);
+	} while (node->val[i].not_leaf);
+
+	if (node_ptr) {
+		int val_ptr = node->val[i].ptr;
+		vhost_memory_region *v = val_fetch(map, val_ptr);
+
+		if (likely((addr >= v->guest_phys_addr) && (addr < (v->gpa_end))))
+			return v;
+	}
+
 	return NULL;
 }
 
@@ -433,7 +429,7 @@ void dump_map(memmap_trie *map, int node_ptr)
 	for (i =0; i < NODE_WITDH; i++) {
 		if (node_val->val[i].used) {
 			printf("%sN%d[%x]  skip: %d prefix: %.*llx:%d\n", in, node_ptr, i, node_val->val[i].skip, nprefix->len * 2, nprefix->val >> (64 - RADIX_WIDTH_BITS * nprefix->len), nprefix->len);
-			if (node_val->val[i].leaf) {
+			if (!node_val->val[i].not_leaf) {
 				vhost_memory_region *v =
 					get_val(map, node_val->val[i].ptr);
 				printf("%s   L%d: a: %.16llx\n", in,
@@ -537,7 +533,7 @@ vhost_memory_region vm2[] = {
 
 int main(int argc, char **argv)
 {
-	test_vhost_memory_array(vm1, ARRAY_SIZE(vm1), 1);
+//	test_vhost_memory_array(vm1, ARRAY_SIZE(vm1), 1);
 	test_vhost_memory_array(vm2, ARRAY_SIZE(vm2), PAGE_SIZE);
 	return 0;
 }
