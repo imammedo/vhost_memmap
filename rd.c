@@ -473,7 +473,10 @@ void test_lookup(memmap_trie *map, struct vhost_memory *mem, vhost_memory_region
 
 		end = vm[i].guest_phys_addr + vm[i].memory_size;
 		for (addr = vm[i].guest_phys_addr; addr < end; addr += step) {
-        		assert(lookup(map, addr));
+		if (!lookup(map, addr)) {
+				printf("addr: %.16llx\n", addr);
+				assert(0);
+			};
 			assert(find_region(mem, addr, 0));
 		}
 	}
