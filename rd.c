@@ -410,7 +410,7 @@ const vhost_memory_region *lookup(memmap_trie *map, const uint64_t addr)
 		level++;
 	} while (node->val[i].not_leaf);
 
-	if (unlikely(!node_ptr)) return NULL;
+	if (!node_ptr) return NULL;
 
 	val_ptr = node->val[i].ptr;
 	v = val_fetch(map, val_ptr);
