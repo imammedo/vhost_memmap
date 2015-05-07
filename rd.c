@@ -25,7 +25,7 @@ struct vhost_memory {
 typedef struct {
 	uint16_t not_leaf: 1;
 	uint16_t skip: 4;
-	uint16_t rsvd: 4;
+	uint16_t rsvd: 3;
 	uint16_t ptr:  8;
 } trie_node_value_t __attribute__((aligned (4)));
 
