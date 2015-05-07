@@ -504,7 +504,7 @@ void test_lookup(memmap_trie *map, struct vhost_memory *mem, vhost_memory_region
 		end = vm[i].guest_phys_addr + vm[i].memory_size;
 		for (addr = vm[i].guest_phys_addr; addr < end; addr += step) {
         		assert(lookup(map, addr));
-			find_region(mem, addr, 0);
+			assert(find_region(mem, addr, 0));
 		}
 	}
 }
@@ -531,6 +531,7 @@ void test_vhost_memory_array(vhost_memory_region *vm, int vm_count, uint64_t ste
 
 	mem = malloc(sizeof(struct vhost_memory) + sizeof *vm * vm_count);
 	memcpy(mem->regions, vm, sizeof *vm * vm_count);
+	mem->nregions = vm_count;
 
 //        dump_map(map, 0);
         test_lookup(map, mem, vm, vm_count, 10);
