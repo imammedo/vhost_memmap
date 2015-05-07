@@ -419,37 +419,6 @@ vhost_memory_region *lookup(memmap_trie *map, uint64_t addr)
 	return NULL;
 }
 
-void compress(memmap_trie *map, int node_ptr)
-{
-	int i;
-	int child_count = 0;
-	int compressible_ptr;
-	trie_node *node_val = get_node(map, node_ptr);
-
-	/* compress children */
-	for (i =0; i < NODE_WITDH; i++) {
-		if (node_val->val[i].used && !node_val->val[i].leaf) {
-			compress(map, node_val->val[i].ptr);
-		}
-	}
-
-	/* check if path compressible */
-	for (i = 0; i < NODE_WITDH; i++) {
-		if (node_val->val[i].used) {
-			child_count++;
-			compressible_ptr = node_val->val[i].ptr;
-		}
-	}
-
-	/* do path compression */
-	if (child_count == 1) {
-		memcpy(node_val, get_node(map, compressible_ptr), sizeof(*node_val));
-		for (i = 0; i < NODE_WITDH; i++)
-			node_val->val[i].skip++;
-	}
-
-}
-
 int ident = 0;
 void dump_map(memmap_trie *map, int node_ptr)
 {
