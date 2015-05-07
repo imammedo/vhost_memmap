@@ -24,9 +24,8 @@ struct vhost_memory {
 
 typedef struct {
 	uint16_t not_leaf: 1;
-	uint16_t used: 1;
 	uint16_t skip: 4;
-	uint16_t rsvd: 3;
+	uint16_t rsvd: 4;
 	uint16_t ptr:  8;
 } trie_node_value_t;
 
@@ -156,14 +155,12 @@ vhost_memory_region *get_val(memmap_trie *map, int ptr)
 
 void node_add_leaf(trie_node_value_t *node_val, int ptr)
 {
-	node_val->used = true;
 	node_val->not_leaf = false;
 	node_val->ptr = ptr;
 }
 
 void replace_node(trie_node_value_t *node_val, int ptr, bool leaf)
 {
-	node_val->used = true;
 	node_val->not_leaf = !leaf;
 	node_val->ptr = ptr;
 }
@@ -257,9 +254,9 @@ int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_pt
 					DBG("Compress N%d with prefix: %.16llx:%d\n",
 						node_ptr, prefix->val, prefix->len);
 					/* relocate old leaf to new slot */
-					node_add_leaf(&node_val->val[k], val_ptr);
 					node_val->val[i].not_leaf = true;
-					node_val->val[i].used = 0;
+					node_val->val[i].ptr = 0;
+					node_add_leaf(&node_val->val[k], val_ptr);
 					DBG("relocate L%d to N%d[%x]\taddr: %llx\n",
 						val_ptr, node_ptr, k, old_addr);
 					/* fall through to insert 'addr' in compressed node */
@@ -272,12 +269,12 @@ int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_pt
 		if (j < prefix->len) { /* prefix mismatch */
 			/* check that current node could be level compressed */
 			for (n = 0; n < NODE_WITDH; n++) /* find first used node */
-				if (node_val->val[n].used)
+				if (node_val->val[n].ptr)
 					break;
 
 			/* check if all pointers the same and more than 1 */
 			for (k = 0, i = 0; n < NODE_WITDH && k < NODE_WITDH; k++) {
-				if (node_val->val[k].used) {
+				if (node_val->val[k].ptr) {
 					if (node_val->val[k].ptr != node_val->val[n].ptr)
 						break;
 					if (node_val->val[k].ptr == node_val->val[n].ptr)
@@ -363,7 +360,7 @@ int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_pt
 			/* relocate old leaf to new node reindexing it to new offset */
 			for (; old_addr < end_addr; old_addr++) {
 				k = get_index(j, old_addr);
-				if (!new_node->val[k].used) {
+				if (!new_node->val[k].ptr) {
 					node_add_leaf(&new_node->val[k], val_ptr);
 					DBG("relocate L%d to N%d[%x]\taddr: %llx\n"
 							, val_ptr, new_ptr, k, old_addr);
@@ -374,7 +371,7 @@ int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_pt
 			node_ptr = new_ptr;
 			/* fall to the next level and let 'addr' leaf be inserted */
 			level++; /* +1 for new level */
-		} else if (!node_val->val[i].used) {
+		} else if (!node_val->val[i].ptr) {
 			if (val) {
 				val_ptr = map->free_val_idx++;
 				val->gpa_end = val->guest_phys_addr + val->memory_size;
@@ -435,7 +432,7 @@ void dump_map(memmap_trie *map, int node_ptr)
         ident++;
 	node_val = get_node(map, node_ptr);
 	for (i =0; i < NODE_WITDH; i++) {
-		if (node_val->val[i].used) {
+		if (node_val->val[i].ptr) {
 			printf("%sN%d[%x]  skip: %d prefix: %.*llx:%d\n", in, node_ptr, i, node_val->val[i].skip, nprefix->len * 2, nprefix->val >> (64 - RADIX_WIDTH_BITS * nprefix->len), nprefix->len);
 			if (!node_val->val[i].not_leaf) {
 				vhost_memory_region *v =
