@@ -27,7 +27,7 @@ typedef struct {
 	uint16_t skip: 4;
 	uint16_t rsvd: 4;
 	uint16_t ptr:  8;
-} trie_node_value_t;
+} trie_node_value_t __attribute__((aligned (4)));
 
 #define RADIX_WIDTH_BITS   8
 #define NODE_WITDH (1U << RADIX_WIDTH_BITS)
@@ -393,15 +393,16 @@ int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_pt
 #define unlikely(x)     __builtin_expect(!!(x), 0)
 #define likely(x)     __builtin_expect(!!(x), 1)
 
-vhost_memory_region *lookup(memmap_trie *map, uint64_t addr)
+const vhost_memory_region *lookup(memmap_trie *map, const uint64_t addr)
 {
-	trie_node *node;
+	const vhost_memory_region *v;
+	const trie_node *node;
+	int val_ptr;
 	int node_ptr = 0;
 	int level = 0, skip = 0;
 	unsigned i;
 
 	do {
-
 		node = node_fetch(map, node_ptr);
 		skip += node->val[0].skip;
 		i = get_index(level + skip, addr);
@@ -409,15 +410,14 @@ vhost_memory_region *lookup(memmap_trie *map, uint64_t addr)
 		level++;
 	} while (node->val[i].not_leaf);
 
-	if (node_ptr) {
-		int val_ptr = node->val[i].ptr;
-		vhost_memory_region *v = val_fetch(map, val_ptr);
+	if (unlikely(!node_ptr)) return NULL;
 
-		if (likely((addr >= v->guest_phys_addr) && (addr < (v->gpa_end))))
-			return v;
-	}
+	val_ptr = node->val[i].ptr;
+	v = val_fetch(map, val_ptr);
+	if ((v->guest_phys_addr > addr) && (v->gpa_end <= addr))
+		return NULL;
 
-	return NULL;
+	return v;
 }
 
 int ident = 0;
