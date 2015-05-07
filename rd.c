@@ -12,6 +12,12 @@ typedef struct vhost_memory_region {
         uint64_t gpa_end;
 } vhost_memory_region;
 
+struct vhost_memory {
+        uint32_t nregions;
+        uint32_t padding;
+        struct vhost_memory_region regions[0];
+};
+
 #define PAGE_SHIFT 12
 #define PAGE_SIZE (1U << 12)
 #define VHOST_PHYS_USED_BITS 44
@@ -466,7 +472,22 @@ void dump_map(memmap_trie *map, int node_ptr)
         ident--;
 }
 
-void test_lookup(memmap_trie *map, vhost_memory_region *vm, int vm_count, uint64_t step)
+static const struct vhost_memory_region *find_region(struct vhost_memory *mem,
+                                                     uint64_t addr, uint32_t len)
+{
+        struct vhost_memory_region *reg;
+        int i;
+
+        for (i = 0; i < mem->nregions; ++i) {
+                reg = mem->regions + i;
+                if (reg->guest_phys_addr <= addr &&
+                    reg->guest_phys_addr + reg->memory_size - 1 >= addr)
+                        return reg;
+        }
+        return NULL;
+}
+
+void test_lookup(memmap_trie *map, struct vhost_memory *mem, vhost_memory_region *vm, int vm_count, uint64_t step)
 {
 	int i;
 	
@@ -477,6 +498,7 @@ void test_lookup(memmap_trie *map, vhost_memory_region *vm, int vm_count, uint64
 		end = vm[i].guest_phys_addr + vm[i].memory_size;
 		for (addr = vm[i].guest_phys_addr; addr < end; addr += step) {
         		assert(lookup(map, addr));
+			find_region(mem, addr, 0);
 		}
 	}
 }
@@ -484,6 +506,7 @@ void test_lookup(memmap_trie *map, vhost_memory_region *vm, int vm_count, uint64
 void test_vhost_memory_array(vhost_memory_region *vm, int vm_count, uint64_t step)
 {
 	int i;
+	struct vhost_memory *mem;
 	memmap_trie *map = create_memmap_trie();
 
 	printf("\n\n\ntest_vhost_memory_array:\n\n");
@@ -498,8 +521,11 @@ void test_vhost_memory_array(vhost_memory_region *vm, int vm_count, uint64_t ste
 		}
 	}
 
+	mem = malloc(sizeof(struct vhost_memory) + sizeof *vm * vm_count);
+	memcpy(mem->regions, vm, sizeof *vm * vm_count);
+
 //        dump_map(map, 0);
-        test_lookup(map, vm, vm_count, 10);
+        test_lookup(map, mem, vm, vm_count, 10);
 }
 
 vhost_memory_region vm1[] = {
@@ -533,7 +559,7 @@ vhost_memory_region vm2[] = {
 
 int main(int argc, char **argv)
 {
-	test_vhost_memory_array(vm1, ARRAY_SIZE(vm1), 1);
+//	test_vhost_memory_array(vm1, ARRAY_SIZE(vm1), 1);
 	test_vhost_memory_array(vm2, ARRAY_SIZE(vm2), PAGE_SIZE);
 	return 0;
 }
