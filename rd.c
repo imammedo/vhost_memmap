@@ -275,12 +275,20 @@ int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_pt
 				if (node_val->val[n].used)
 					break;
 
-			for (k = 0; n < NODE_WITDH && k < NODE_WITDH; k++)
-				if (node_val->val[k].used &&
-				    node_val->val[k].ptr != node_val->val[n].ptr)
-					break;
+			/* check if all pointers the same and more than 1 */
+			for (k = 0, i = 0; n < NODE_WITDH && k < NODE_WITDH; k++) {
+				if (node_val->val[k].used) {
+					if (node_val->val[k].ptr != node_val->val[n].ptr)
+						break;
+					if (node_val->val[k].ptr == node_val->val[n].ptr)
+						i++;
+				}
+			}
 
-			if (k < NODE_WITDH) { /* level is not comressible */
+			/* level is not comressible(has different leaves)
+			 * or has 1 leaf only
+			 */
+			if (i == 1 || k < NODE_WITDH) {
 				/* copy current node to a new one */
 				new_node = newnode(map, &new_ptr);
 				nprefix = get_node_prefix(map, new_ptr);
