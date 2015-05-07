@@ -214,6 +214,7 @@ void set_prefix(trie_prefix *prefix, uint64_t addr, int len)
 }
 
 #define DBG(...)
+/* returns pointer to inserted value or 0 if insert fails */
 int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_ptr, int node_ptr, int level)
 {
 	trie_node *node_val;
@@ -325,8 +326,13 @@ int insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, int val_pt
 			end_addr = old_val->guest_phys_addr + old_val->memory_size;
 
 			/* do not expand if addr matches to leaf */
-			if (addr >= old_val->guest_phys_addr && addr < end_addr)
+			if (addr >= old_val->guest_phys_addr && addr < end_addr) {
+				if (val && val != old_val) {
+					// BUGON (new range shouldn't intersect with exiting)
+					return 0;
+				}
 				break;
+			}
 
 			DBG("split leaf at N%d[%x]\n", node_ptr, i);
 			/* insert interim node, relocate old leaf there */
@@ -518,6 +524,8 @@ void test_vhost_memory_array(vhost_memory_region *vm, int vm_count, uint64_t ste
 		for (j = vm[i].guest_phys_addr; j < end; j += step) {
 			bool start = j == vm[i].guest_phys_addr;
 			val_ptr = insert(map, j, start ? &vm[i] : NULL, val_ptr, 0, 0);
+			if (!val_ptr) dump_map(map, 0);
+			assert(val_ptr);
 		}
 	}
 
@@ -535,10 +543,10 @@ vhost_memory_region vm1[] = {
 { 0xaabb010000000003, 0x10000, 0x7fe3b0000000 },
 { 0xaabb020300000004, 0x10, 0x7fe3b0000000 },
 { 0xaabb020300000015, 0x10000, 0x7fe3b0000000 },
-//{ 0xaabb02103000cc05, 0x10000, 0x7fe3b0000000 },
-//{ 0xaabb02103000cc06, 0x10000, 0x7fe3b0000000 },
-//{ 0xaabb011000000006, 0x10000, 0x7fe3b0000000 },
-//{ 0xaabb041000000007, 0x10000, 0x7fe3b0000000 },
+{ 0xaabb02103000cc05, 0x1, 0x7fe3b0000000 },
+{ 0xaabb02103000cc06, 0x10000, 0x7fe3b0000000 },
+{ 0xaabb011000000006, 0x10000, 0x7fe3b0000000 },
+{ 0xaabb041000000007, 0x10000, 0x7fe3b0000000 },
 { 0x00000000dd000000, 0x10000, 0x7fe3b0000000 },
 };
 
@@ -559,7 +567,7 @@ vhost_memory_region vm2[] = {
 
 int main(int argc, char **argv)
 {
-//	test_vhost_memory_array(vm1, ARRAY_SIZE(vm1), 1);
+	test_vhost_memory_array(vm1, ARRAY_SIZE(vm1), 1);
 	test_vhost_memory_array(vm2, ARRAY_SIZE(vm2), PAGE_SIZE);
 	return 0;
 }
