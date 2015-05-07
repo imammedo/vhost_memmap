@@ -447,7 +447,7 @@ void dump_map(memmap_trie *map, int node_ptr)
         ident--;
 }
 
-static const struct vhost_memory_region *find_region(struct vhost_memory *mem,
+struct vhost_memory_region *find_region(struct vhost_memory *mem,
                                                      uint64_t addr, uint32_t len)
 {
         struct vhost_memory_region *reg;
