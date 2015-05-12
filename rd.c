@@ -231,7 +231,7 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 					nprefix->len, new_node_skip);
 			} else { /* all childs the same, compress level */
 				DBG("Do level compression of N%llx\n", node_ptr->ptr);
-				new_ptr = node->val[0]; /* TODO: why 1st element */
+				new_ptr = node->val[n]; /* use 1st leaf as reference */
 				new_node = NULL;
 			}
 
@@ -413,6 +413,7 @@ void test_lookup(memmap_trie *map, struct vhost_memory *mem, vhost_memory_region
 		end = vm[i].guest_phys_addr + vm[i].memory_size;
 		for (addr = vm[i].guest_phys_addr; addr < end; addr += step) {
 		if (!lookup(*(uint64_t *)&map->root, addr)) {
+				dump_map(map, &map->root);
 				printf("addr: %.16llx\n", addr);
 				assert(0);
 			};
