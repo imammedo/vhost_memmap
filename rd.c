@@ -316,7 +316,7 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 				posix_memalign((void *)&val_ptr, 16, sizeof(*val));
 				val_ptr >>= 4;
 				*get_val(val_ptr) = *val;
-				val->gpa_end = val->guest_phys_addr + val->memory_size;
+				get_val(val_ptr)->gpa_end = val->guest_phys_addr + val->memory_size;
 			}
 			node_add_leaf(&node->val[i], val_ptr);
 			DBG("insert L%llx at N%llx[%x]\taddr: %llx\n", val_ptr, node_ptr->ptr, i, addr);
