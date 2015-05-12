@@ -410,15 +410,17 @@ const vhost_memory_region *lookup(memmap_trie *map, const uint64_t addr)
 	const vhost_memory_region *v;
 	const trie_node *node;
 	int node_ptr = 0;
-	int level = 0, skip = map->root.skip;
+	int skip = map->root.skip;
 	unsigned i;
+	uint64_t a = addr;
 
 	do {
 		node = node_fetch(map, node_ptr);
-		i = get_index(level + skip, addr);
-		skip += node->val[i].skip;
+		a <<= RADIX_WIDTH_BITS * skip;
+	        i = a >> (64 - RADIX_WIDTH_BITS);
+		a <<= RADIX_WIDTH_BITS;
+		skip = node->val[i].skip;
 		node_ptr = node->val[i].ptr;
-		level++;
 	} while (node->val[i].not_leaf);
 
 	if (!node_ptr) return NULL;
