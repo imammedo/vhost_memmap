@@ -113,13 +113,13 @@ void set_prefix(trie_prefix *prefix, uint64_t addr, int len)
 	prefix->val = addr << (64 - RADIX_WIDTH_BITS * len);
 	prefix->len = len;
 	prefix->in_use = true;
-printf("set_prefix: for %llx prefix: 0x%.*llx:%d\n", prefix->node_ptr, len *2, prefix->val, len);
+//printf("set_prefix: for %llx prefix: 0x%.*llx:%d\n", prefix->node_ptr, len *2, prefix->val, len);
 }
 
 #define DBG(fmt, ...) printf("%-*d  " fmt, level * 3, level,  __VA_ARGS__)
-//#define DBG(...)
+#define DBG(...)
 
-trie_node *get_trie_node(trie_node_value_t *node_val)
+trie_node *get_trie_node(const trie_node_value_t *node_val)
 {
 	uint64_t  addr = node_val->ptr;
 	return (trie_node *)(addr << 4);
@@ -334,36 +334,30 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 #define unlikely(x)     __builtin_expect(!!(x), 0)
 #define likely(x)     __builtin_expect(!!(x), 1)
 
-const vhost_memory_region *lookup(memmap_trie *map, const uint64_t addr)
-{ return NULL; }
-/*
-const vhost_memory_region *lookup(memmap_trie *map, const uint64_t addr)
+const vhost_memory_region *lookup(uint64_t node_ptr, const uint64_t addr)
 {
 	const vhost_memory_region *v;
-	const trie_node *node;
-	int node_ptr = 0;
-	int skip = map->root.skip;
 	unsigned i;
 	uint64_t a = addr;
 
 	do {
-		node = node_fetch(map, node_ptr);
-		a <<= RADIX_WIDTH_BITS * skip;
-	        i = a >> (64 - RADIX_WIDTH_BITS);
+		const trie_node *node;
+
+		a <<= RADIX_WIDTH_BITS * (((uint8_t)node_ptr & 0xF) >> 1);
+		i = a >> (64 - RADIX_WIDTH_BITS);
 		a <<= RADIX_WIDTH_BITS;
-		skip = node->val[i].skip;
-		node_ptr = node->val[i].ptr;
-	} while (node->val[i].not_leaf);
+		node = (trie_node *)(node_ptr & ~0xF);
+		node_ptr = *(const uint64_t *)(&node->val[i]);
+	} while ((uint8_t)node_ptr & 0xF);
 
 	if (!node_ptr) return NULL;
 
-	v = val_fetch(map, node_ptr);
+	v = (vhost_memory_region *)(node_ptr & ~0xF);
 	if ((v->guest_phys_addr > addr) && (v->gpa_end <= addr))
 		return NULL;
 
 	return v;
 }
-*/
 
 int ident = 0;
 void dump_map(memmap_trie *map, trie_node_value_t *node_ptr)
@@ -417,13 +411,13 @@ void test_lookup(memmap_trie *map, struct vhost_memory *mem, vhost_memory_region
 		uint64_t addr, end;
 
 		end = vm[i].guest_phys_addr + vm[i].memory_size;
-		for (addr = vm[i].guest_phys_addr; addr < vm[i].guest_phys_addr + 1; addr += step) {
-/*		if (!lookup(map, addr)) {
+		for (addr = vm[i].guest_phys_addr; addr < end; addr += step) {
+		if (!lookup(*(uint64_t *)&map->root, addr)) {
 				printf("addr: %.16llx\n", addr);
 				assert(0);
 			};
 			assert(find_region(mem, addr, 0));
-*/		}
+		}
 	}
 }
 
@@ -439,7 +433,7 @@ void test_vhost_memory_array(vhost_memory_region *vm, int vm_count, uint64_t ste
 		uint64_t val_ptr;
 		
 		end = vm[i].guest_phys_addr + vm[i].memory_size;
-		for (j = vm[i].guest_phys_addr; j < vm[i].guest_phys_addr + 1; j += step) {
+		for (j = vm[i].guest_phys_addr; j < end; j += step) {
 			bool start = j == vm[i].guest_phys_addr;
 			val_ptr = insert(map, j, start ? &vm[i] : NULL, val_ptr);
 			if (!val_ptr) dump_map(map, &map->root);
@@ -451,7 +445,7 @@ void test_vhost_memory_array(vhost_memory_region *vm, int vm_count, uint64_t ste
 	memcpy(mem->regions, vm, sizeof *vm * vm_count);
 	mem->nregions = vm_count;
 
-        dump_map(map, &map->root);
+        //dump_map(map, &map->root);
         test_lookup(map, mem, vm, vm_count, 10);
 }
 
@@ -486,7 +480,7 @@ vhost_memory_region vm2[] = {
 
 int main(int argc, char **argv)
 {
-	test_vhost_memory_array(vm1, ARRAY_SIZE(vm1), 1);
-//	test_vhost_memory_array(vm2, ARRAY_SIZE(vm2), PAGE_SIZE);
+//	test_vhost_memory_array(vm1, ARRAY_SIZE(vm1), 1);
+	test_vhost_memory_array(vm2, ARRAY_SIZE(vm2), PAGE_SIZE);
 	return 0;
 }
