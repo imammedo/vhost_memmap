@@ -334,7 +334,7 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 #define unlikely(x)     __builtin_expect(!!(x), 0)
 #define likely(x)     __builtin_expect(!!(x), 1)
 
-const vhost_memory_region *lookup(uint64_t node_ptr, const uint64_t addr)
+const inline vhost_memory_region *lookup(uint64_t node_ptr, const uint64_t addr)
 {
 	const vhost_memory_region *v;
 	unsigned i;
@@ -350,13 +350,11 @@ const vhost_memory_region *lookup(uint64_t node_ptr, const uint64_t addr)
 		node_ptr = *(const uint64_t *)(&node->val[i]);
 	} while ((uint8_t)node_ptr & 0xF);
 
-	if (!node_ptr) return NULL;
+	v = (vhost_memory_region *)(node_ptr);
+	if (likely(v) && likely(v->guest_phys_addr <= addr) && likely(v->gpa_end > addr))
+		return v;
 
-	v = (vhost_memory_region *)(node_ptr & ~0xF);
-	if ((v->guest_phys_addr > addr) && (v->gpa_end <= addr))
-		return NULL;
-
-	return v;
+	return NULL;
 }
 
 int ident = 0;
