@@ -24,13 +24,14 @@ struct vhost_memory {
 #define VHOST_PHYS_USED_BITS 44
 
 typedef struct {
-	uint64_t not_leaf: 1;
+	uint64_t is_node: 1;
 	uint64_t skip: 3;
 	uint64_t ptr:  60;
 	uint64_t pad;
 } trie_node_value_t __attribute__((aligned (16)));
 
-#define IS_LEAF(x) (!x.not_leaf && x.ptr)
+#define IS_LEAF(x) (!x.is_node && x.ptr)
+#define IS_NODE(x) (x.is_node && x.ptr)
 #define IS_FREE(x) (!x.ptr)
 #define NODE_PTR(x) (x)->ptr
 #define SET_NODE_PTR(x, v) (x)->ptr = v
@@ -62,13 +63,13 @@ memmap_trie *create_memmap_trie()
 	posix_memalign((void **)&root_node, 16, sizeof(trie_node));
 	memset(root_node, 0, sizeof(trie_node));
 	SET_NODE_PTR(&map->root, (uint64_t)root_node >> 4);
-	map->root.not_leaf = 1;
+	map->root.is_node = 1;
 	return map;
 }
 
 void node_add_leaf(trie_node_value_t *node_val, uint64_t ptr)
 {
-	node_val->not_leaf = false;
+	node_val->is_node = false;
 	SET_NODE_PTR(node_val, ptr);
 }
 
@@ -157,7 +158,7 @@ static trie_node *alloc_node(trie_node_value_t *node_ptr, memmap_trie *map,
 	memset(new_node, 0, sizeof(new_node));
 	SET_NODE_PTR(node_ptr, (unsigned long long)new_node >> 4);
 	node_ptr->skip = skip;
-	node_ptr->not_leaf = 1;
+	node_ptr->is_node = 1;
 
 	/* initialize node prefix */
 	prefix = get_node_prefix(map, node_ptr);
@@ -274,7 +275,7 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 			replace_node(&node->val[i], &new_ptr);
 
 			DBG("relocate N%llx as %c%llx at N%llx[%x]\n", NODE_PTR(node_ptr),
-				new_ptr.not_leaf ? 'N' : 'L', new_ptr.ptr, NODE_PTR(node_ptr), i);
+				IS_NODE(new_ptr) ? 'N' : 'L', new_ptr.ptr, NODE_PTR(node_ptr), i);
 			DBG("addjust N%llx Nskip: %d " PREFIX_FMT "\n", NODE_PTR(node_ptr),
 				 node_ptr->skip, PREFIX_ARGS(map, node_ptr));
 		}
