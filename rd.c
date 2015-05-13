@@ -113,7 +113,6 @@ void set_prefix(trie_prefix *prefix, uint64_t addr, int len)
 	prefix->val = addr << (64 - RADIX_WIDTH_BITS * len);
 	prefix->len = len;
 	prefix->in_use = true;
-//printf("set_prefix: for %llx prefix: 0x%.*llx:%d\n", prefix->node_ptr, len *2, prefix->val, len);
 }
 
 #define DBG(...)
@@ -266,15 +265,15 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 			memset(node, 0, sizeof(*node));
 			i = get_index(j, prefix->val);
 			set_prefix(prefix, prefix->val, j);
+			/* update skip value of current node with new prefix len */
 			node_ptr->skip = j - (level + skip);
-
 			replace_node(&node->val[i], &new_ptr);
+
 			DBG("relocate N%llx as %c%llx at N%llx[%x]\n", node_ptr->ptr,
 				new_ptr.not_leaf ? 'N' : 'L', new_ptr.ptr, node_ptr->ptr, i);
 			DBG("addjust N%llx Nskip: %d " PREFIX_FMT "\n", node_ptr->ptr,
 				 node_ptr->skip, PREFIX_ARGS(map, node_ptr->ptr));
 		}
-
 
 		skip += node_ptr->skip;
 		i = get_index(level + skip, addr);
@@ -320,10 +319,10 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 							, val_ptr, new_ptr.ptr, k, old_addr);
 				}
 			}
-
 			replace_node(&node->val[i], &new_ptr);
-			node_ptr = &node->val[i];
+
 			/* fall to the next level and let 'addr' leaf be inserted */
+			node_ptr = &node->val[i];
 			level++; /* +1 for new level */
 		} else if (IS_FREE(node->val[i])) {
 			if (val) {
