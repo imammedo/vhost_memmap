@@ -264,18 +264,15 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 			replace_node(&node->val[i], new_ptr.ptr, k < NODE_WITDH ? 0 : 1);
 			DBG("Prefix mismatch, relocate N%llx to N%llx at N%llx[%x]\n",
 				 node_ptr->ptr, new_ptr.ptr, node_ptr->ptr, i);
-			DBG("addjust prefix %.*llx:%d\n", prefix->len * 2,
-				prefix->val >> (64 - RADIX_WIDTH_BITS * prefix->len),
-				prefix->len);
+			DBG("addjust " PREFIX_FMT "\n", PREFIX_ARGS(map, node_ptr->ptr));
 		}
 
 
 		skip += node_ptr->skip;
 		i = get_index(level + skip, addr);
 		DBG("N%llx[%x]\taddr: %.16llx\tskip: %d\n", node_ptr->ptr, i, addr, skip);
-		DBG("N%llx prefix: %.*llx:%d Nskip: %d\n", node_ptr->ptr, prefix->len * 2,
-			 prefix->val >> (64 - RADIX_WIDTH_BITS * prefix->len),
-			 prefix->len, node_ptr->skip);
+		DBG("N%llx Nskip: %d " PREFIX_FMT "\n", node_ptr->ptr, node_ptr->skip,
+			 PREFIX_ARGS(map, node_ptr->ptr));
 		if (IS_LEAF(node->val[i])) {
 			uint64_t old_addr, end_addr;
 			void *ptr;
