@@ -67,10 +67,9 @@ void node_add_leaf(trie_node_value_t *node_val, uint64_t ptr)
 	node_val->ptr = ptr;
 }
 
-void replace_node(trie_node_value_t *node_val, uint64_t ptr, bool leaf)
+static inline void replace_node(trie_node_value_t *node_val, const trie_node_value_t *new_ptr)
 {
-	node_val->not_leaf = !leaf;
-	node_val->ptr = ptr;
+	*node_val = *new_ptr;
 }
 
 inline const uint64_t get_index(const int level, const uint64_t addr)
@@ -146,7 +145,8 @@ static inline void * ERR_PTR(long error)
         return (void *) error;
 }
 
-static trie_node *alloc_node(trie_node_value_t *node_ptr, memmap_trie *map, uint64_t addr, int len) {
+static trie_node *alloc_node(trie_node_value_t *node_ptr, memmap_trie *map,
+				uint64_t addr, int len, int skip) {
 	trie_node *new_node;
 	trie_prefix *prefix;
 
@@ -156,6 +156,8 @@ static trie_node *alloc_node(trie_node_value_t *node_ptr, memmap_trie *map, uint
 
 	memset(new_node, 0, sizeof(new_node));
 	node_ptr->ptr = (unsigned long long)new_node >> 4;
+	node_ptr->skip = skip;
+	node_ptr->not_leaf = 1;
 
 	/* initialize node prefix */
 	prefix = get_node_prefix(map, node_ptr->ptr);
@@ -220,6 +222,7 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 		if (j < prefix->len) { /* prefix mismatch */
 			int new_node_skip;
 
+			DBG("Prefix mismatch\n","");
 			/* check if current node could be level compressed */
 			for (n = 0; n < NODE_WITDH; n++) /* find first used node */
 				if (node->val[n].ptr)
@@ -239,32 +242,37 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 			 * or has 1 leaf only
 			 */
 			if (i == 1 || k < NODE_WITDH) {
-				new_node = alloc_node(&new_ptr, map, prefix->val, prefix->len);
+				new_node_skip =	node_ptr->skip - (j - (level + skip))
+					- 1 /* new level will consume 1 skip step */;
+				new_node = alloc_node(&new_ptr, map, prefix->val, prefix->len,
+							new_node_skip);
 
 				/* copy current node to a new one */
 				memcpy(new_node, node, sizeof(*new_node));
-				new_node_skip =	node_ptr->skip - (j - (level + skip))
-					- 1 /* new level will consume 1 skip step */;
 
-				DBG("new N%llx " PREFIX_FMT " skip: %d\n", new_ptr.ptr,
-					PREFIX_ARGS(map, new_ptr.ptr), new_node_skip);
+				DBG("new N%llx " PREFIX_FMT " Nskip: %d\n", new_ptr.ptr,
+					PREFIX_ARGS(map, new_ptr.ptr), new_ptr.skip);
 			} else { /* all childs the same, compress level */
+				/*
+				 * take pointer to 1st leaf as reference leaf
+				 * then wipe curent node and relocate leaf
+				 * to a new position with a shorter prefix
+				 */
 				DBG("Do level compression of N%llx\n", node_ptr->ptr);
 				new_ptr = node->val[n]; /* use 1st leaf as reference */
-				new_node = NULL;
 			}
 
 			/* form new node in place of current */
 			memset(node, 0, sizeof(*node));
 			i = get_index(j, prefix->val);
 			set_prefix(prefix, prefix->val, j);
-			if (new_node)
-				node->val[i].skip = new_node_skip;
 			node_ptr->skip = j - (level + skip);
-			replace_node(&node->val[i], new_ptr.ptr, k < NODE_WITDH ? 0 : 1);
-			DBG("Prefix mismatch, relocate N%llx to N%llx at N%llx[%x]\n",
-				 node_ptr->ptr, new_ptr.ptr, node_ptr->ptr, i);
-			DBG("addjust " PREFIX_FMT "\n", PREFIX_ARGS(map, node_ptr->ptr));
+
+			replace_node(&node->val[i], &new_ptr);
+			DBG("relocate N%llx as %c%llx at N%llx[%x]\n", node_ptr->ptr,
+				new_ptr.not_leaf ? 'N' : 'L', new_ptr.ptr, node_ptr->ptr, i);
+			DBG("addjust N%llx Nskip: %d " PREFIX_FMT "\n", node_ptr->ptr,
+				 node_ptr->skip, PREFIX_ARGS(map, node_ptr->ptr));
 		}
 
 
@@ -298,7 +306,7 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 			node_skip = j - (level + skip) - 1 /* for next level */ ;
 
 			/* alloc interim node for relocating old leaf there */
-			new_node = alloc_node(&new_ptr, map, old_addr, j);
+			new_node = alloc_node(&new_ptr, map, old_addr, j, node_skip);
 
 			DBG("new N%llx\nset N%llx Nskip: %d " PREFIX_FMT "\n", new_ptr.ptr,
 			 new_ptr.ptr, node_skip, PREFIX_ARGS(map, new_ptr.ptr));
@@ -313,8 +321,7 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 				}
 			}
 
-			node->val[i].skip = node_skip;
-			replace_node(&node->val[i], new_ptr.ptr, 0);
+			replace_node(&node->val[i], &new_ptr);
 			node_ptr = &node->val[i];
 			/* fall to the next level and let 'addr' leaf be inserted */
 			level++; /* +1 for new level */
@@ -480,6 +487,10 @@ vhost_memory_region vm2[] = {
 { 0x0fc054000, 0x2000, 0x7fe3fd600000 }
 };
 
+vhost_memory_region level_compression[] = {
+{ 0x0000000000000000, 0x100, 0x7fe3b0000000 },
+{ 0x0000000000100000, 0x1, 0x7fe3b0000000 },
+};
 
 
 #define ARRAY_SIZE(a) (sizeof(a)/sizeof(a[0]))
@@ -488,5 +499,6 @@ int main(int argc, char **argv)
 {
 	test_vhost_memory_array(vm1, ARRAY_SIZE(vm1), 1);
 	test_vhost_memory_array(vm2, ARRAY_SIZE(vm2), PAGE_SIZE);
+	test_vhost_memory_array(level_compression, ARRAY_SIZE(level_compression), 0xfe);
 	return 0;
 }
