@@ -181,7 +181,7 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 		node = get_trie_node(node_ptr);
 
 		/* path compression at root node */
-		if (!prefix->in_use) {
+		if (!prefix->in_use) { /* only root node can be without prefix set */
 			uint64_t old_addr;
 
 			/* find a leaf so we could try get common prefix */
@@ -190,25 +190,25 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 					break;
 
 			if (i < NODE_WITDH) { /* have leaf to compare */
-				/*
-				 *  disable path compression at root for next inserts
-				 *  since path will be already compressed if compressable
-				 */
 				val_ptr = node->val[i].ptr;
 				old_addr = get_val(val_ptr)->guest_phys_addr; /*TODO: is it ok to use guest_phys_addr as base */
 				j = prefix_len(addr, old_addr, sizeof(addr));
+				/*
+				 *  disables path compression at root for next inserts
+				 *  since path will be already compressed if compressable
+				 */
+				set_prefix(prefix, old_addr, j);
 				if (j) { /* compress path using common prefix */
 					k = get_index(j, old_addr);
-					set_prefix(prefix, old_addr, j);
-					//set_skip(node, prefix->len);
+
 					node_ptr->skip = prefix->len;
-					DBG("Compress N%llx with prefix: %.16llx:%d\n",
-						node_ptr->ptr, prefix->val, prefix->len);
 					/* relocate old leaf to new slot */
 					node->val[i].not_leaf = true;
 					node->val[i].ptr = 0;
 					node_add_leaf(&node->val[k], val_ptr);
-					DBG("relocate L%llx to N%llx[%x]\taddr: %llx\n",
+					DBG("Compress N%llx with prefix: %.16llx:%d\n",
+						node_ptr->ptr, prefix->val, prefix->len);
+					DBG("Relocate L%llx to N%llx[%x]\taddr: %llx\n",
 						val_ptr, node_ptr->ptr, k, old_addr);
 					/* fall through to insert 'addr' in compressed node */
 				}
