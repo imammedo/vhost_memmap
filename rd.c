@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <assert.h>
 
 typedef struct vhost_memory_region {
@@ -116,8 +117,14 @@ void set_prefix(trie_prefix *prefix, uint64_t addr, int len)
 //printf("set_prefix: for %llx prefix: 0x%.*llx:%d\n", prefix->node_ptr, len *2, prefix->val, len);
 }
 
-#define DBG(fmt, ...) printf("%-*d  " fmt, level * 3, level,  __VA_ARGS__)
 #define DBG(...)
+//#define DBG(fmt, ...) printf("%-*d  " fmt, level * 3, level,  __VA_ARGS__)
+#define PREFIX_FMT "prefix %.*llx:%d"
+#define PREFIX_ARGS(map, ptr) \
+	get_node_prefix(map, ptr)->len * 2, get_node_prefix(map, ptr)->val >> \
+	(64 - RADIX_WIDTH_BITS * get_node_prefix(map, ptr)->len), \
+	get_node_prefix(map, ptr)->len
+
 
 trie_node *get_trie_node(const trie_node_value_t *node_val)
 {
@@ -134,6 +141,30 @@ vhost_memory_region *get_val(uint64_t ptr)
 #define IS_LEAF(x) (!x.not_leaf && x.ptr)
 #define IS_FREE(x) (!x.ptr)
 
+static inline void * ERR_PTR(long error)
+{
+        return (void *) error;
+}
+
+static trie_node *alloc_node(trie_node_value_t *node_ptr, memmap_trie *map, uint64_t addr, int len) {
+	trie_node *new_node;
+	trie_prefix *prefix;
+
+	posix_memalign((void **)&new_node, 16, sizeof(*new_node));
+	if (!new_node)
+		return ERR_PTR(-ENOMEM);
+
+	memset(new_node, 0, sizeof(new_node));
+	node_ptr->ptr = (unsigned long long)new_node >> 4;
+
+	/* initialize node prefix */
+	prefix = get_node_prefix(map, node_ptr->ptr);
+	set_prefix(prefix, addr, len);
+
+	return new_node;
+}
+
+
 /* returns pointer to inserted value or 0 if insert fails */
 uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint64_t val_ptr)
 {
@@ -146,7 +177,6 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 	DBG("=== addr: 0x%llx\tval: %p\n", addr, val);
 	do {
 		unsigned i, k, j, n;
-		trie_prefix *nprefix;
 		trie_node *new_node;
 		trie_node_value_t new_ptr;
 		trie_prefix *prefix = get_node_prefix(map, node_ptr->ptr);
@@ -212,23 +242,15 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 			 * or has 1 leaf only
 			 */
 			if (i == 1 || k < NODE_WITDH) {
+				new_node = alloc_node(&new_ptr, map, prefix->val, prefix->len);
+
 				/* copy current node to a new one */
-				void *ptr;
-				posix_memalign((void *)&ptr, 16, sizeof(trie_node));
-				memset(ptr, 0, sizeof(trie_node));
-				new_ptr.ptr = (uint64_t)ptr >> 4;
-				
-				new_node = get_trie_node(&new_ptr);
-				nprefix = get_node_prefix(map, new_ptr.ptr);
 				memcpy(new_node, node, sizeof(*new_node));
-				*nprefix = *get_node_prefix(map, node_ptr->ptr);
-				nprefix->node_ptr = new_ptr.ptr;
 				new_node_skip =	node_ptr->skip - (j - (level + skip))
 					- 1 /* new level will consume 1 skip step */;
-				DBG("new N%llx prefix %.*llx:%d skip: %d\n", new_ptr.ptr,
-					nprefix->len * 2,
-					nprefix->val >> (64 - RADIX_WIDTH_BITS * nprefix->len),
-					nprefix->len, new_node_skip);
+
+				DBG("new N%llx " PREFIX_FMT " skip: %d\n", new_ptr.ptr,
+					PREFIX_ARGS(map, new_ptr.ptr), new_node_skip);
 			} else { /* all childs the same, compress level */
 				DBG("Do level compression of N%llx\n", node_ptr->ptr);
 				new_ptr = node->val[n]; /* use 1st leaf as reference */
@@ -277,24 +299,15 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 			}
 
 			DBG("split leaf at N%llx[%x]\n", node_ptr->ptr, i);
-			/* insert interim node, relocate old leaf there */
-			posix_memalign((void *)&ptr, 16, sizeof(trie_node));
-			memset(ptr, 0, sizeof(trie_node));
-			new_ptr.ptr = (uint64_t)ptr >> 4;
-			new_node = get_trie_node(&new_ptr);
-			nprefix = get_node_prefix(map, new_ptr.ptr);
-			*nprefix = *prefix;
-			nprefix->node_ptr = new_ptr.ptr;
-			DBG("new N%llx\n", new_ptr.ptr);
-
 			/* get path prefix and skips for new node */
 			j = prefix_len(addr, old_addr, sizeof(addr));
-			set_prefix(nprefix, old_addr, j);
 			node_skip = j - (level + skip) - 1 /* for next level */ ;
-			DBG("set N%llx Nskip: %d prefix: 0x%.*llx:%d\n",
-			 new_ptr.ptr, node_skip, nprefix->len * 2,
-			 nprefix->val  >> (64 - RADIX_WIDTH_BITS * nprefix->len),
-			 nprefix->len);
+
+			/* alloc interim node for relocating old leaf there */
+			new_node = alloc_node(&new_ptr, map, old_addr, j);
+
+			DBG("new N%llx\nset N%llx Nskip: %d " PREFIX_FMT "\n", new_ptr.ptr,
+			 new_ptr.ptr, node_skip, PREFIX_ARGS(map, new_ptr.ptr));
 
 			/* relocate old leaf to new node reindexing it to new offset */
 			for (; old_addr < end_addr; old_addr++) {
@@ -479,7 +492,7 @@ vhost_memory_region vm2[] = {
 
 int main(int argc, char **argv)
 {
-//	test_vhost_memory_array(vm1, ARRAY_SIZE(vm1), 1);
+	test_vhost_memory_array(vm1, ARRAY_SIZE(vm1), 1);
 	test_vhost_memory_array(vm2, ARRAY_SIZE(vm2), PAGE_SIZE);
 	return 0;
 }
