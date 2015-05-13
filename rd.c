@@ -168,19 +168,16 @@ static trie_node *alloc_node(trie_node_value_t *node_ptr, memmap_trie *map, uint
 /* returns pointer to inserted value or 0 if insert fails */
 uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint64_t val_ptr)
 {
-	trie_node *node;
-	trie_node_value_t *node_ptr = &map->root;
-	
+	unsigned i, k, j, n;
+	trie_prefix *prefix;
+	trie_node *node, *new_node;
+	trie_node_value_t new_ptr, *node_ptr = &map->root;
 	int level = 0;
 	int skip = 0;
 
 	DBG("=== addr: 0x%llx\tval: %p\n", addr, val);
 	do {
-		unsigned i, k, j, n;
-		trie_node *new_node;
-		trie_node_value_t new_ptr;
-		trie_prefix *prefix = get_node_prefix(map, node_ptr->ptr);
-
+		prefix = get_node_prefix(map, node_ptr->ptr);
 		node = get_trie_node(node_ptr);
 
 		/* path compression at root node */
