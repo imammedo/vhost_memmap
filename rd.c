@@ -32,6 +32,8 @@ typedef struct {
 
 #define IS_LEAF(x) (!x.is_node && x.ptr)
 #define IS_NODE(x) (x.is_node && x.ptr)
+#define MARK_AS_NODE(x) ((x).is_node = 1)
+#define MARK_AS_LEAF(x) ((x).is_node = 0)
 #define IS_FREE(x) (!x.ptr)
 #define NODE_PTR(x) (x)->ptr
 #define SET_NODE_PTR(x, v) (x)->ptr = v
@@ -63,13 +65,13 @@ memmap_trie *create_memmap_trie()
 	posix_memalign((void **)&root_node, 16, sizeof(trie_node));
 	memset(root_node, 0, sizeof(trie_node));
 	SET_NODE_PTR(&map->root, (uint64_t)root_node >> 4);
-	map->root.is_node = 1;
+	MARK_AS_NODE(map->root);
 	return map;
 }
 
 void node_add_leaf(trie_node_value_t *node_val, uint64_t ptr)
 {
-	node_val->is_node = false;
+	MARK_AS_LEAF(*node_val);
 	SET_NODE_PTR(node_val, ptr);
 }
 
@@ -158,7 +160,7 @@ static trie_node *alloc_node(trie_node_value_t *node_ptr, memmap_trie *map,
 	memset(new_node, 0, sizeof(new_node));
 	SET_NODE_PTR(node_ptr, (unsigned long long)new_node >> 4);
 	node_ptr->skip = skip;
-	node_ptr->is_node = 1;
+	MARK_AS_NODE(*node_ptr);
 
 	/* initialize node prefix */
 	prefix = get_node_prefix(map, node_ptr);
