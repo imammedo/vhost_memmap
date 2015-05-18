@@ -39,7 +39,7 @@ typedef struct {
 #define SET_NODE_SKIP(x, v) (x)->ptr = (x)->ptr & ~(7ULL << 1) | (((v) & 0xf) << 1)
 
 #define RADIX_WIDTH_BITS   8
-#define NODE_WITDH (1U << RADIX_WIDTH_BITS)
+#define NODE_WITDH (1ULL << RADIX_WIDTH_BITS)
 typedef struct {
 	trie_node_value_t val[NODE_WITDH];
 } trie_node;
@@ -237,7 +237,7 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 				new_ptr = node->val[n]; /* use 1st leaf as reference */
 				if (!addr_matches_value(&node->val[n], addr))
 					prefix->non_uniform = NON_UNIFORM_NODE;
-i				DBG("Do level compression of N%llx\n", NODE_PTR(node_ptr));
+				DBG("Do level compression of N%llx\n", NODE_PTR(node_ptr));
 			}
 
 			/* form new node in place of current */
@@ -290,7 +290,8 @@ i				DBG("Do level compression of N%llx\n", NODE_PTR(node_ptr));
 			 NODE_PTR(&new_ptr), node_skip, PREFIX_ARGS(map, &new_ptr));
 
 			/* relocate old leaf to new node reindexing it to new offset */
-			for (; old_addr < end_addr; old_addr++) {
+			for (; old_addr < end_addr;
+				old_addr += 1ULL << (64 - (j + 1)  * RADIX_WIDTH_BITS)) {
 				k = get_index(j, old_addr);
 				if (IS_FREE(&new_node->val[k])) {
 				/* do only one insert in case index for addr matches */
