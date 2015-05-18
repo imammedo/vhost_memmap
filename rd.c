@@ -37,6 +37,8 @@ typedef struct {
 #define IS_FREE(x) (!x.ptr)
 #define NODE_PTR(x) (x)->ptr
 #define SET_NODE_PTR(x, v) (x)->ptr = v
+#define NODE_SKIP(x) (x)->skip
+#define SET_NODE_SKIP(x, v) (x)->skip = v
 
 #define RADIX_WIDTH_BITS   8
 #define NODE_WITDH (1U << RADIX_WIDTH_BITS)
@@ -159,7 +161,7 @@ static trie_node *alloc_node(trie_node_value_t *node_ptr, memmap_trie *map,
 
 	memset(new_node, 0, sizeof(new_node));
 	SET_NODE_PTR(node_ptr, (unsigned long long)new_node >> 4);
-	node_ptr->skip = skip;
+	SET_NODE_SKIP(node_ptr, skip);
 	MARK_AS_NODE(*node_ptr);
 
 	/* initialize node prefix */
@@ -210,7 +212,7 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 				if (j) { /* compress path using common prefix */
 					k = get_index(j, old_addr);
 
-					node_ptr->skip = prefix->len;
+					SET_NODE_SKIP(node_ptr, prefix->len);
 					/* relocate old leaf to new slot */
 					clear_node_val(&node->val[i]);
 					node_add_leaf(&node->val[k], val_ptr);
@@ -248,7 +250,7 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 			 * or has 1 leaf only
 			 */
 			if (i == 1 || k < NODE_WITDH) {
-				new_node_skip =	node_ptr->skip - (j - (level + skip))
+				new_node_skip =	NODE_SKIP(node_ptr) - (j - (level + skip))
 					- 1 /* new level will consume 1 skip step */;
 				new_node = alloc_node(&new_ptr, map, prefix->val, prefix->len,
 							new_node_skip);
@@ -257,7 +259,7 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 				memcpy(new_node, node, sizeof(*new_node));
 
 				DBG("new N%llx " PREFIX_FMT " Nskip: %d\n", NODE_PTR(&new_ptr),
-					PREFIX_ARGS(map, &new_ptr), new_ptr.skip);
+					PREFIX_ARGS(map, &new_ptr), NODE_SKIP(&new_ptr));
 			} else { /* all childs the same, compress level */
 				/*
 				 * take pointer to 1st leaf as reference leaf
@@ -273,19 +275,19 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 			i = get_index(j, prefix->val);
 			set_prefix(prefix, prefix->val, j);
 			/* update skip value of current node with new prefix len */
-			node_ptr->skip = j - (level + skip);
+			SET_NODE_SKIP(node_ptr, j - (level + skip));
 			replace_node(&node->val[i], &new_ptr);
 
 			DBG("relocate N%llx as %c%llx at N%llx[%x]\n", NODE_PTR(node_ptr),
 				IS_NODE(new_ptr) ? 'N' : 'L', new_ptr.ptr, NODE_PTR(node_ptr), i);
 			DBG("addjust N%llx Nskip: %d " PREFIX_FMT "\n", NODE_PTR(node_ptr),
-				 node_ptr->skip, PREFIX_ARGS(map, node_ptr));
+				 NODE_SKIP(node_ptr), PREFIX_ARGS(map, node_ptr));
 		}
 
-		skip += node_ptr->skip;
+		skip += NODE_SKIP(node_ptr);
 		i = get_index(level + skip, addr);
 		DBG("N%llx[%x]\taddr: %.16llx\tskip: %d\n", NODE_PTR(node_ptr), i, addr, skip);
-		DBG("N%llx Nskip: %d " PREFIX_FMT "\n", NODE_PTR(node_ptr), node_ptr->skip,
+		DBG("N%llx Nskip: %d " PREFIX_FMT "\n", NODE_PTR(node_ptr), NODE_SKIP(node_ptr),
 			 PREFIX_ARGS(map, node_ptr));
 		if (IS_LEAF(node->val[i])) {
 			uint64_t old_addr, end_addr;
@@ -391,7 +393,7 @@ void dump_map(memmap_trie *map, trie_node_value_t *node_ptr)
 	node_val = get_trie_node(node_ptr);
 	for (i =0; i < NODE_WITDH; i++) {
 		if (!IS_FREE(node_val->val[i])) {
-			printf("%sN%llx[%x]  skip: %d prefix: %.*llx:%d\n", in, NODE_PTR(node_ptr), i, node_ptr->skip, nprefix->len * 2, nprefix->val >> (64 - RADIX_WIDTH_BITS * nprefix->len), nprefix->len);
+			printf("%sN%llx[%x]  skip: %d prefix: %.*llx:%d\n", in, NODE_PTR(node_ptr), i, NODE_SKIP(node_ptr), nprefix->len * 2, nprefix->val >> (64 - RADIX_WIDTH_BITS * nprefix->len), nprefix->len);
 			if (IS_LEAF(node_val->val[i])) {
 				vhost_memory_region *v =
 					get_val(NODE_PTR(&node_val->val[i]));
