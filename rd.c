@@ -48,7 +48,11 @@ typedef struct trie_prefix {
 	uint64_t node_ptr;
 	uint64_t val;
 	uint8_t len;
+	bool non_uniform;
 } trie_prefix;
+
+#define UNIFORM_NODE false
+#define NON_UNIFORM_NODE true
 
 typedef struct {
 	trie_node_value_t root;
@@ -143,7 +147,7 @@ static inline void * ERR_PTR(long error)
 }
 
 static trie_node *alloc_node(trie_node_value_t *node_ptr, memmap_trie *map,
-				uint64_t addr, int len, int skip) {
+				uint64_t addr, int len, int skip, bool non_uniform) {
 	trie_node *new_node;
 	trie_prefix *prefix;
 
@@ -159,6 +163,7 @@ static trie_node *alloc_node(trie_node_value_t *node_ptr, memmap_trie *map,
 	/* initialize node prefix */
 	prefix = get_node_prefix(map, node_ptr);
 	set_prefix(prefix, addr, len);
+	prefix->non_uniform = non_uniform;
 
 	return new_node;
 }
@@ -166,6 +171,16 @@ static trie_node *alloc_node(trie_node_value_t *node_ptr, memmap_trie *map,
 static void clear_node_val(trie_node_value_t *node_ptr)
 {
 	memset(node_ptr, 0, sizeof(*node_ptr));
+}
+
+static bool addr_matches_value(trie_node_value_t *node_ptr, uint64_t addr) {
+	uint64_t start = get_val(NODE_PTR(node_ptr))->guest_phys_addr;
+	uint64_t end = get_val(NODE_PTR(node_ptr))->gpa_end;
+
+	if (addr >= start && addr < end)
+		return true;
+
+	return false;
 }
 
 /* returns pointer to inserted value or 0 if insert fails */
@@ -187,7 +202,7 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 			int new_node_skip = 64/RADIX_WIDTH_BITS - 1;
 			set_prefix(prefix, addr, new_node_skip);
 			node = alloc_node(node_ptr, map, prefix->val, prefix->len,
-							new_node_skip);
+							new_node_skip, UNIFORM_NODE);
 		}
 
 		/* lazy expand level if new common prefix is smaller than current */
@@ -196,30 +211,12 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 			int new_node_skip;
 
 			DBG("Prefix mismatch\n","");
-			/* check if current node could be level compressed */
-			for (n = 0; n < NODE_WITDH; n++) /* find first used node */
-				if (NODE_PTR(&node->val[n]))
-					break;
-
-			/* check if all pointers the same and more than 1 */
-			for (k = 0, i = 0; n < NODE_WITDH && k < NODE_WITDH; k++) {
-				if (NODE_PTR(&node->val[k])) {
-					if (NODE_PTR(&node->val[k]) != NODE_PTR(&node->val[n]))
-						break;
-					if (NODE_PTR(&node->val[k]) == NODE_PTR(&node->val[n]))
-						i++;
-				}
-			}
-
-			/* level is not comressible(has different leaves)
-			 * or has 1 leaf only
-			 */
-			if (k < NODE_WITDH) {
-			//if (i == 1 || k < NODE_WITDH) {
+			/* level is not comressible(has different leaves) */
+			if (prefix->non_uniform) {
 				new_node_skip =	NODE_SKIP(node_ptr) - (j - (level + skip))
 					- 1 /* new level will consume 1 skip step */;
 				new_node = alloc_node(&new_ptr, map, prefix->val, prefix->len,
-							new_node_skip);
+							new_node_skip, NON_UNIFORM_NODE);
 
 				/* copy current node to a new one */
 				memcpy(new_node, node, sizeof(*new_node));
@@ -232,8 +229,15 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 				 * then wipe curent node and relocate leaf
 				 * to a new position with a shorter prefix
 				 */
-				DBG("Do level compression of N%llx\n", NODE_PTR(node_ptr));
+				/* find a leaf */
+				for (n = 0; n < NODE_WITDH; n++)
+					if (NODE_PTR(&node->val[n]))
+						break;
+
 				new_ptr = node->val[n]; /* use 1st leaf as reference */
+				if (!addr_matches_value(&node->val[n], addr))
+					prefix->non_uniform = NON_UNIFORM_NODE;
+i				DBG("Do level compression of N%llx\n", NODE_PTR(node_ptr));
 			}
 
 			/* form new node in place of current */
@@ -265,8 +269,8 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 			old_addr = old_val->guest_phys_addr;
 			end_addr = old_val->guest_phys_addr + old_val->memory_size;
 
-			/* do not expand if addr matches to leaf */
-			if (addr >= old_val->guest_phys_addr && addr < end_addr) {
+			/* do not split if addr matches the leaf */
+			if (addr_matches_value(&node->val[i], addr)) {
 				if (val && val != old_val) {
 					// BUGON (new range shouldn't intersect with exiting)
 					return 0;
@@ -280,7 +284,7 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 			node_skip = j - (level + skip) - 1 /* for next level */ ;
 
 			/* alloc interim node for relocating old leaf there */
-			new_node = alloc_node(&new_ptr, map, old_addr, j, node_skip);
+			new_node = alloc_node(&new_ptr, map, old_addr, j, node_skip, NON_UNIFORM_NODE);
 
 			DBG("new N%llx\nset N%llx Nskip: %d " PREFIX_FMT "\n", NODE_PTR(&new_ptr),
 			 NODE_PTR(&new_ptr), node_skip, PREFIX_ARGS(map, &new_ptr));
