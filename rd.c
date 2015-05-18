@@ -106,7 +106,7 @@ trie_prefix *get_node_prefix(memmap_trie *map, trie_node_value_t *node_ptr)
 
 	for (i = 0; i < end && map->prefixes[i].node_ptr; i++) {
 		if (map->prefixes[i].node_ptr == NODE_PTR(node_ptr))
-			return &map->prefixes[i]; 
+			return &map->prefixes[i];
 	}
 
 	assert(i < end);
@@ -184,7 +184,7 @@ static bool addr_matches_value(trie_node_value_t *node_ptr, uint64_t addr) {
 }
 
 /* returns pointer to inserted value or 0 if insert fails */
-uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint64_t val_ptr)
+uint64_t insert(memmap_trie *map, vhost_memory_region *val)
 {
 	unsigned i, k, j, n;
 	trie_prefix *prefix;
@@ -192,9 +192,12 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 	trie_node_value_t new_ptr, *node_ptr = &map->root;
 	int level = 0;
 	int skip = 0;
-
-	DBG("=== addr: 0x%llx\tval: %p\n", addr, val);
+	uint64_t val_ptr = 0;
+	uint64_t addr_inc = 0;
+	uint64_t end = val->guest_phys_addr + val->memory_size;
+	uint64_t addr = val->guest_phys_addr;
 	do {
+		DBG("=== addr: 0x%llx\tval: %p, inc: 0x%llx\n", addr, val, addr_inc);
 		prefix = get_node_prefix(map, node_ptr);
 		node = get_trie_node(node_ptr);
 
@@ -271,11 +274,13 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 
 			/* do not split if addr matches the leaf */
 			if (addr_matches_value(&node->val[i], addr)) {
-				if (val && val != old_val) {
+				if (val->guest_phys_addr != old_val->guest_phys_addr) {
 					// BUGON (new range shouldn't intersect with exiting)
 					return 0;
 				}
-				break;
+				addr += addr_inc;
+				skip -= NODE_SKIP(node_ptr);
+				continue;
 			}
 
 			DBG("split leaf at N%llx[%x]\n", NODE_PTR(node_ptr), i);
@@ -287,11 +292,12 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 			new_node = alloc_node(&new_ptr, map, old_addr, j, node_skip, NON_UNIFORM_NODE);
 
 			DBG("new N%llx\nset N%llx Nskip: %d " PREFIX_FMT "\n", NODE_PTR(&new_ptr),
-			 NODE_PTR(&new_ptr), node_skip, PREFIX_ARGS(map, &new_ptr));
+			NODE_PTR(&new_ptr), node_skip, PREFIX_ARGS(map, &new_ptr));
 
 			/* relocate old leaf to new node reindexing it to new offset */
+			addr_inc = 1ULL << (64 - (j + 1)  * RADIX_WIDTH_BITS);
 			for (; old_addr < end_addr;
-				old_addr += 1ULL << (64 - (j + 1)  * RADIX_WIDTH_BITS)) {
+				old_addr += addr_inc) {
 				k = get_index(j, old_addr);
 				if (IS_FREE(&new_node->val[k])) {
 				/* do only one insert in case index for addr matches */
@@ -305,23 +311,39 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 			/* fall to the next level and let 'addr' leaf be inserted */
 			node_ptr = &node->val[i];
 			level++; /* +1 for new level */
+			val_ptr = 0;
 		} else if (IS_FREE(&node->val[i])) {
-			if (val) {
+			int shift;
+
+			if (!val_ptr) {
 				posix_memalign((void *)&val_ptr, 16, sizeof(*val));
 				val_ptr >>= 4;
 				*get_val(val_ptr) = *val;
 				get_val(val_ptr)->gpa_end = val->guest_phys_addr + val->memory_size;
 			}
 			node_add_leaf(&node->val[i], val_ptr);
-			DBG("insert L%llx at N%llx[%x]\taddr: %llx\n", val_ptr, NODE_PTR(node_ptr), i, addr);
-			break;
 
+			if (!prefix->non_uniform) {
+				/* find a leaf */
+				for (n = 0; n < NODE_WITDH; n++)
+					if (NODE_PTR(&node->val[n]))
+						break;
+				if (n < NODE_WITDH && !addr_matches_value(&node->val[n], addr))
+					prefix->non_uniform = NON_UNIFORM_NODE;
+			}
+
+
+			DBG("insert L%llx at N%llx[%x]\taddr: %llx\n", val_ptr, NODE_PTR(node_ptr), i, addr);
+			shift = 64 - (level + skip + 1)  * RADIX_WIDTH_BITS;
+			addr_inc = 1ULL << shift;
+			addr += addr_inc;
+			skip -= NODE_SKIP(node_ptr);
 		} else { /* traverse tree */
 			node_ptr = &node->val[i];
 		        DBG("go to N%llx[%x]\n", NODE_PTR(node_ptr), i);
 			level++;
 		}
-	} while (1);
+	} while (addr < end);
 	return val_ptr;
 }
 
@@ -423,15 +445,8 @@ void test_vhost_memory_array(vhost_memory_region *vm, int vm_count, uint64_t ste
 	printf("\n\n\ntest_vhost_memory_array:\n\n");
 	for (i = 0; i < vm_count; i++) {
 		uint64_t j, end;
-		uint64_t val_ptr;
 		
-		end = vm[i].guest_phys_addr + vm[i].memory_size;
-		for (j = vm[i].guest_phys_addr; j < end; j += step) {
-			bool start = j == vm[i].guest_phys_addr;
-			val_ptr = insert(map, j, start ? &vm[i] : NULL, val_ptr);
-			if (!val_ptr) dump_map(map, &map->root);
-			assert(val_ptr);
-		}
+			assert(insert(map, &vm[i]));
 	}
 
 	mem = malloc(sizeof(struct vhost_memory) + sizeof *vm * vm_count);
