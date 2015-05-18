@@ -24,21 +24,19 @@ struct vhost_memory {
 #define VHOST_PHYS_USED_BITS 44
 
 typedef struct {
-	uint64_t is_node: 1;
-	uint64_t skip: 3;
-	uint64_t ptr:  60;
+	uint64_t ptr;
 	uint64_t pad;
 } trie_node_value_t __attribute__((aligned (16)));
 
-#define IS_LEAF(x) (!(x)->is_node && (x)->ptr)
-#define IS_NODE(x) ((x)->is_node && (x)->ptr)
-#define MARK_AS_NODE(x) ((x)->is_node = 1)
-#define MARK_AS_LEAF(x) ((x)->is_node = 0)
-#define IS_FREE(x) (!(x)->ptr)
-#define NODE_PTR(x) (x)->ptr
-#define SET_NODE_PTR(x, v) (x)->ptr = v
-#define NODE_SKIP(x) (x)->skip
-#define SET_NODE_SKIP(x, v) (x)->skip = v
+#define IS_LEAF(x) (!((x)->ptr & 1) && (x)->ptr & ~0xfULL)
+#define IS_NODE(x) ((x)->ptr & 1 && (x)->ptr & ~0xfULL)
+#define MARK_AS_NODE(x) ((x)->ptr |= 1)
+#define MARK_AS_LEAF(x) ((x)->ptr &= ~1ULL)
+#define IS_FREE(x) (!((x)->ptr & ~0xfULL))
+#define NODE_PTR(x) ((x)->ptr >> 4)
+#define SET_NODE_PTR(x, v) (x)->ptr = ((x)->ptr & 0xfULL) | (v << 4)
+#define NODE_SKIP(x) (((x)->ptr & 0xf) >> 1)
+#define SET_NODE_SKIP(x, v) (x)->ptr = (x)->ptr & ~(7ULL << 1) | (((v) & 0xf) << 1)
 
 #define RADIX_WIDTH_BITS   8
 #define NODE_WITDH (1U << RADIX_WIDTH_BITS)
@@ -279,7 +277,7 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 			replace_node(&node->val[i], &new_ptr);
 
 			DBG("relocate N%llx as %c%llx at N%llx[%x]\n", NODE_PTR(node_ptr),
-				IS_NODE(new_ptr) ? 'N' : 'L', new_ptr.ptr, NODE_PTR(node_ptr), i);
+				IS_NODE(&new_ptr) ? 'N' : 'L', NODE_PTR(&new_ptr), NODE_PTR(node_ptr), i);
 			DBG("addjust N%llx Nskip: %d " PREFIX_FMT "\n", NODE_PTR(node_ptr),
 				 NODE_SKIP(node_ptr), PREFIX_ARGS(map, node_ptr));
 		}
