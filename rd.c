@@ -48,7 +48,6 @@ typedef struct trie_prefix {
 	uint64_t node_ptr;
 	uint64_t val;
 	uint8_t len;
-	bool in_use;
 } trie_prefix;
 
 typedef struct {
@@ -62,10 +61,6 @@ memmap_trie *create_memmap_trie()
 
 	memmap_trie *map = malloc(sizeof(*map));
 	memset(map, 0, sizeof(*map));
-	posix_memalign((void **)&root_node, 16, sizeof(trie_node));
-	memset(root_node, 0, sizeof(trie_node));
-	SET_NODE_PTR(&map->root, (uint64_t)root_node >> 4);
-	MARK_AS_NODE(&map->root);
 	return map;
 }
 
@@ -120,7 +115,6 @@ void set_prefix(trie_prefix *prefix, uint64_t addr, int len)
 	addr = addr >> (64 - RADIX_WIDTH_BITS * len);
 	prefix->val = addr << (64 - RADIX_WIDTH_BITS * len);
 	prefix->len = len;
-	prefix->in_use = true;
 }
 
 #define DBG(...)
@@ -189,38 +183,11 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 		prefix = get_node_prefix(map, node_ptr);
 		node = get_trie_node(node_ptr);
 
-		/* path compression at root node */
-		if (!prefix->in_use) { /* only root node can be without prefix set */
-			uint64_t old_addr;
-
-			/* find a leaf so we could try get common prefix */
-			for (i = 0; i < NODE_WITDH; i++)
-				if (IS_LEAF(&node->val[i]))
-					break;
-
-			if (i < NODE_WITDH) { /* have leaf to compare */
-				val_ptr = NODE_PTR(&node->val[i]);
-				old_addr = get_val(val_ptr)->guest_phys_addr; /*TODO: is it ok to use guest_phys_addr as base */
-				j = prefix_len(addr, old_addr, sizeof(addr));
-				/*
-				 *  disables path compression at root for next inserts
-				 *  since path will be already compressed if compressable
-				 */
-				set_prefix(prefix, old_addr, j);
-				if (j) { /* compress path using common prefix */
-					k = get_index(j, old_addr);
-
-					SET_NODE_SKIP(node_ptr, prefix->len);
-					/* relocate old leaf to new slot */
-					clear_node_val(&node->val[i]);
-					node_add_leaf(&node->val[k], val_ptr);
-					DBG("Compress N%llx with prefix: %.16llx:%d\n",
-						NODE_PTR(node_ptr), prefix->val, prefix->len);
-					DBG("Relocate L%llx to N%llx[%x]\taddr: %llx\n",
-						val_ptr, NODE_PTR(node_ptr), k, old_addr);
-					/* fall through to insert 'addr' in compressed node */
-				}
-			}
+		if (!node) { /* path compression at root node */
+			int new_node_skip = 64/RADIX_WIDTH_BITS - 1;
+			set_prefix(prefix, addr, new_node_skip);
+			node = alloc_node(node_ptr, map, prefix->val, prefix->len,
+							new_node_skip);
 		}
 
 		/* lazy expand level if new common prefix is smaller than current */
@@ -247,7 +214,8 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 			/* level is not comressible(has different leaves)
 			 * or has 1 leaf only
 			 */
-			if (i == 1 || k < NODE_WITDH) {
+			if (k < NODE_WITDH) {
+			//if (i == 1 || k < NODE_WITDH) {
 				new_node_skip =	NODE_SKIP(node_ptr) - (j - (level + skip))
 					- 1 /* new level will consume 1 skip step */;
 				new_node = alloc_node(&new_ptr, map, prefix->val, prefix->len,
@@ -256,7 +224,7 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 				/* copy current node to a new one */
 				memcpy(new_node, node, sizeof(*new_node));
 
-				DBG("new N%llx " PREFIX_FMT " Nskip: %d\n", NODE_PTR(&new_ptr),
+				DBG("Do lazy exp, new N%llx " PREFIX_FMT " Nskip: %d\n", NODE_PTR(&new_ptr),
 					PREFIX_ARGS(map, &new_ptr), NODE_SKIP(&new_ptr));
 			} else { /* all childs the same, compress level */
 				/*
