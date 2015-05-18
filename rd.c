@@ -30,11 +30,11 @@ typedef struct {
 	uint64_t pad;
 } trie_node_value_t __attribute__((aligned (16)));
 
-#define IS_LEAF(x) (!x.is_node && x.ptr)
-#define IS_NODE(x) (x.is_node && x.ptr)
-#define MARK_AS_NODE(x) ((x).is_node = 1)
-#define MARK_AS_LEAF(x) ((x).is_node = 0)
-#define IS_FREE(x) (!x.ptr)
+#define IS_LEAF(x) (!(x)->is_node && (x)->ptr)
+#define IS_NODE(x) ((x)->is_node && (x)->ptr)
+#define MARK_AS_NODE(x) ((x)->is_node = 1)
+#define MARK_AS_LEAF(x) ((x)->is_node = 0)
+#define IS_FREE(x) (!(x)->ptr)
 #define NODE_PTR(x) (x)->ptr
 #define SET_NODE_PTR(x, v) (x)->ptr = v
 #define NODE_SKIP(x) (x)->skip
@@ -67,13 +67,13 @@ memmap_trie *create_memmap_trie()
 	posix_memalign((void **)&root_node, 16, sizeof(trie_node));
 	memset(root_node, 0, sizeof(trie_node));
 	SET_NODE_PTR(&map->root, (uint64_t)root_node >> 4);
-	MARK_AS_NODE(map->root);
+	MARK_AS_NODE(&map->root);
 	return map;
 }
 
 void node_add_leaf(trie_node_value_t *node_val, uint64_t ptr)
 {
-	MARK_AS_LEAF(*node_val);
+	MARK_AS_LEAF(node_val);
 	SET_NODE_PTR(node_val, ptr);
 }
 
@@ -162,7 +162,7 @@ static trie_node *alloc_node(trie_node_value_t *node_ptr, memmap_trie *map,
 	memset(new_node, 0, sizeof(new_node));
 	SET_NODE_PTR(node_ptr, (unsigned long long)new_node >> 4);
 	SET_NODE_SKIP(node_ptr, skip);
-	MARK_AS_NODE(*node_ptr);
+	MARK_AS_NODE(node_ptr);
 
 	/* initialize node prefix */
 	prefix = get_node_prefix(map, node_ptr);
@@ -197,7 +197,7 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 
 			/* find a leaf so we could try get common prefix */
 			for (i = 0; i < NODE_WITDH; i++)
-				if (IS_LEAF(node->val[i]))
+				if (IS_LEAF(&node->val[i]))
 					break;
 
 			if (i < NODE_WITDH) { /* have leaf to compare */
@@ -289,7 +289,7 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 		DBG("N%llx[%x]\taddr: %.16llx\tskip: %d\n", NODE_PTR(node_ptr), i, addr, skip);
 		DBG("N%llx Nskip: %d " PREFIX_FMT "\n", NODE_PTR(node_ptr), NODE_SKIP(node_ptr),
 			 PREFIX_ARGS(map, node_ptr));
-		if (IS_LEAF(node->val[i])) {
+		if (IS_LEAF(&node->val[i])) {
 			uint64_t old_addr, end_addr;
 			void *ptr;
 			int old_nskip;
@@ -322,7 +322,7 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 			/* relocate old leaf to new node reindexing it to new offset */
 			for (; old_addr < end_addr; old_addr++) {
 				k = get_index(j, old_addr);
-				if (IS_FREE(new_node->val[k])) {
+				if (IS_FREE(&new_node->val[k])) {
 				/* do only one insert in case index for addr matches */
 					node_add_leaf(&new_node->val[k], val_ptr);
 					DBG("relocate L%llx to N%llx[%x]\taddr: %llx\n"
@@ -334,7 +334,7 @@ uint64_t insert(memmap_trie *map, uint64_t addr, vhost_memory_region *val, uint6
 			/* fall to the next level and let 'addr' leaf be inserted */
 			node_ptr = &node->val[i];
 			level++; /* +1 for new level */
-		} else if (IS_FREE(node->val[i])) {
+		} else if (IS_FREE(&node->val[i])) {
 			if (val) {
 				posix_memalign((void *)&val_ptr, 16, sizeof(*val));
 				val_ptr >>= 4;
@@ -392,9 +392,9 @@ void dump_map(memmap_trie *map, trie_node_value_t *node_ptr)
         ident++;
 	node_val = get_trie_node(node_ptr);
 	for (i =0; i < NODE_WITDH; i++) {
-		if (!IS_FREE(node_val->val[i])) {
+		if (!IS_FREE(&node_val->val[i])) {
 			printf("%sN%llx[%x]  skip: %d prefix: %.*llx:%d\n", in, NODE_PTR(node_ptr), i, NODE_SKIP(node_ptr), nprefix->len * 2, nprefix->val >> (64 - RADIX_WIDTH_BITS * nprefix->len), nprefix->len);
-			if (IS_LEAF(node_val->val[i])) {
+			if (IS_LEAF(&node_val->val[i])) {
 				vhost_memory_region *v =
 					get_val(NODE_PTR(&node_val->val[i]));
 				printf("%s   L%llx: a: %.16llx\n", in,
