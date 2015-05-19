@@ -23,9 +23,15 @@ struct vhost_memory {
 #define PAGE_SIZE (1U << 12)
 #define VHOST_PHYS_USED_BITS 44
 
+typedef struct trie_prefix {
+	uint64_t len:3;
+	uint64_t val:60;
+	uint64_t non_uniform:1;
+} trie_prefix;
+
 typedef struct {
 	uint64_t ptr;
-	uint64_t pad;
+	trie_prefix prefix;
 } trie_node_value_t __attribute__((aligned (16)));
 
 #define IS_LEAF(x) (!((x)->ptr & 1) && (x)->ptr & ~0xfULL)
@@ -38,25 +44,19 @@ typedef struct {
 #define NODE_SKIP(x) (((x)->ptr & 0xf) >> 1)
 #define SET_NODE_SKIP(x, v) (x)->ptr = (x)->ptr & ~(7ULL << 1) | (((v) & 0xf) << 1)
 
+#define PREFIX_VAL(x) ((uint64_t)((x)->val) << 4)
+
 #define RADIX_WIDTH_BITS   8
 #define NODE_WITDH (1ULL << RADIX_WIDTH_BITS)
 typedef struct {
 	trie_node_value_t val[NODE_WITDH];
 } trie_node;
 
-typedef struct trie_prefix {
-	uint64_t node_ptr;
-	uint64_t val;
-	uint8_t len;
-	bool non_uniform;
-} trie_prefix;
-
 #define UNIFORM_NODE false
 #define NON_UNIFORM_NODE true
 
 typedef struct {
 	trie_node_value_t root;
-	trie_prefix prefixes[256];
 } memmap_trie ;
 
 memmap_trie *create_memmap_trie()
@@ -101,23 +101,13 @@ int prefix_len(uint64_t a, uint64_t b, int max_len)
 
 trie_prefix *get_node_prefix(memmap_trie *map, trie_node_value_t *node_ptr)
 {
-	int i;
-	const end = sizeof(map->prefixes)/sizeof(*map->prefixes);
-
-	for (i = 0; i < end && map->prefixes[i].node_ptr; i++) {
-		if (map->prefixes[i].node_ptr == NODE_PTR(node_ptr))
-			return &map->prefixes[i];
-	}
-
-	assert(i < end);
-	map->prefixes[i].node_ptr = NODE_PTR(node_ptr);
-	return &map->prefixes[i];
+	return &node_ptr->prefix;
 }
 
 void set_prefix(trie_prefix *prefix, uint64_t addr, int len)
 {
 	addr = addr >> (64 - RADIX_WIDTH_BITS * len);
-	prefix->val = addr << (64 - RADIX_WIDTH_BITS * len);
+	prefix->val = (addr << (64 - RADIX_WIDTH_BITS * len)) >> 4;
 	prefix->len = len;
 }
 
@@ -203,13 +193,13 @@ uint64_t insert(memmap_trie *map, vhost_memory_region *val)
 
 		if (!node) { /* path compression at root node */
 			int new_node_skip = 64/RADIX_WIDTH_BITS - 1;
-			set_prefix(prefix, addr, new_node_skip);
-			node = alloc_node(node_ptr, map, prefix->val, prefix->len,
-							new_node_skip, UNIFORM_NODE);
+			set_prefix(prefix, addr, new_node_skip); // TODO: delete it ?
+			node = alloc_node(node_ptr, map, PREFIX_VAL(prefix),
+				 prefix->len, new_node_skip, UNIFORM_NODE);
 		}
 
 		/* lazy expand level if new common prefix is smaller than current */
-		j = prefix_len(addr, prefix->val, prefix->len);
+		j = prefix_len(addr, PREFIX_VAL(prefix), prefix->len);
 		if (j < prefix->len) { /* prefix mismatch */
 			int new_node_skip;
 
@@ -218,8 +208,8 @@ uint64_t insert(memmap_trie *map, vhost_memory_region *val)
 			if (prefix->non_uniform) {
 				new_node_skip =	NODE_SKIP(node_ptr) - (j - (level + skip))
 					- 1 /* new level will consume 1 skip step */;
-				new_node = alloc_node(&new_ptr, map, prefix->val, prefix->len,
-							new_node_skip, NON_UNIFORM_NODE);
+				new_node = alloc_node(&new_ptr, map, PREFIX_VAL(prefix),
+					 prefix->len, new_node_skip, NON_UNIFORM_NODE);
 
 				/* copy current node to a new one */
 				memcpy(new_node, node, sizeof(*new_node));
@@ -245,8 +235,8 @@ uint64_t insert(memmap_trie *map, vhost_memory_region *val)
 
 			/* form new node in place of current */
 			memset(node, 0, sizeof(*node));
-			i = get_index(j, prefix->val);
-			set_prefix(prefix, prefix->val, j);
+			i = get_index(j, PREFIX_VAL(prefix));
+			set_prefix(prefix, PREFIX_VAL(prefix), j);
 			/* update skip value of current node with new prefix len */
 			SET_NODE_SKIP(node_ptr, j - (level + skip));
 			replace_node(&node->val[i], &new_ptr);
@@ -386,7 +376,7 @@ void dump_map(memmap_trie *map, trie_node_value_t *node_ptr)
 	node_val = get_trie_node(node_ptr);
 	for (i =0; i < NODE_WITDH; i++) {
 		if (!IS_FREE(&node_val->val[i])) {
-			printf("%sN%llx[%x]  skip: %d prefix: %.*llx:%d\n", in, NODE_PTR(node_ptr), i, NODE_SKIP(node_ptr), nprefix->len * 2, nprefix->val >> (64 - RADIX_WIDTH_BITS * nprefix->len), nprefix->len);
+			printf("%sN%llx[%x]  skip: %d prefix: %.*llx:%d\n", in, NODE_PTR(node_ptr), i, NODE_SKIP(node_ptr), nprefix->len * 2, PREFIX_VAL(nprefix) >> (64 - RADIX_WIDTH_BITS * nprefix->len), nprefix->len);
 			if (IS_LEAF(&node_val->val[i])) {
 				vhost_memory_region *v =
 					get_val(NODE_PTR(&node_val->val[i]));
