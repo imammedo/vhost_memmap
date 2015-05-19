@@ -193,9 +193,8 @@ uint64_t insert(memmap_trie *map, vhost_memory_region *val)
 
 		if (!node) { /* path compression at root node */
 			int new_node_skip = 64/RADIX_WIDTH_BITS - 1;
-			set_prefix(prefix, addr, new_node_skip); // TODO: delete it ?
-			node = alloc_node(node_ptr, map, PREFIX_VAL(prefix),
-				 prefix->len, new_node_skip, UNIFORM_NODE);
+			node = alloc_node(node_ptr, map, addr, new_node_skip,
+				 new_node_skip, UNIFORM_NODE);
 		}
 
 		/* lazy expand level if new common prefix is smaller than current */
