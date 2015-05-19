@@ -21,7 +21,6 @@ struct vhost_memory {
 
 #define PAGE_SHIFT 12
 #define PAGE_SIZE (1U << 12)
-#define VHOST_PHYS_USED_BITS 44
 
 typedef struct trie_prefix {
 	unsigned long long len:3;
@@ -33,6 +32,7 @@ typedef struct {
 	unsigned long long ptr;
 	trie_prefix prefix;
 } trie_node_value_t __attribute__((aligned (16)));
+
 
 #define IS_LEAF(x) (!((x)->ptr & 1) && (x)->ptr & ~0xfULL)
 #define IS_NODE(x) ((x)->ptr & 1 && (x)->ptr & ~0xfULL)
@@ -46,6 +46,7 @@ typedef struct {
 
 #define PREFIX_VAL(x) ((unsigned long long)((x)->val) << 4)
 
+#define KEY_BITS_SIZE (sizeof(unsigned long long) * 8)
 #define RADIX_WIDTH_BITS   8
 #define NODE_WITDH (1ULL << RADIX_WIDTH_BITS)
 typedef struct {
@@ -81,7 +82,7 @@ static void replace_node(trie_node_value_t *node_val, const trie_node_value_t *n
 
 const unsigned long long get_index(const int level, const unsigned long long addr)
 {
-	int lvl_shift = 64 - RADIX_WIDTH_BITS * (level + 1);
+	int lvl_shift = KEY_BITS_SIZE - RADIX_WIDTH_BITS * (level + 1);
 	return (addr >> lvl_shift) & (NODE_WITDH - 1);
 }
 
@@ -106,8 +107,8 @@ trie_prefix *get_node_prefix(memmap_trie *map, trie_node_value_t *node_ptr)
 
 void set_prefix(trie_prefix *prefix, unsigned long long addr, int len)
 {
-	addr = addr >> (64 - RADIX_WIDTH_BITS * len);
-	prefix->val = (addr << (64 - RADIX_WIDTH_BITS * len)) >> 4;
+	addr = addr >> (KEY_BITS_SIZE - RADIX_WIDTH_BITS * len);
+	prefix->val = (addr << (KEY_BITS_SIZE - RADIX_WIDTH_BITS * len)) >> 4;
 	prefix->len = len;
 }
 
@@ -116,7 +117,7 @@ void set_prefix(trie_prefix *prefix, unsigned long long addr, int len)
 #define PREFIX_FMT "prefix %.*llx:%d"
 #define PREFIX_ARGS(map, ptr) \
 	get_node_prefix(map, ptr)->len * 2, get_node_prefix(map, ptr)->val >> \
-	(64 - RADIX_WIDTH_BITS * get_node_prefix(map, ptr)->len), \
+	(KEY_BITS_SIZE - RADIX_WIDTH_BITS * get_node_prefix(map, ptr)->len), \
 	get_node_prefix(map, ptr)->len
 
 
@@ -192,7 +193,7 @@ unsigned long long insert(memmap_trie *map, vhost_memory_region *val)
 		node = get_trie_node(node_ptr);
 
 		if (!node) { /* path compression at root node */
-			int new_node_skip = 64/RADIX_WIDTH_BITS - 1;
+			int new_node_skip = KEY_BITS_SIZE/RADIX_WIDTH_BITS - 1;
 			node = alloc_node(node_ptr, map, addr, new_node_skip,
 				 new_node_skip, UNIFORM_NODE);
 		}
@@ -284,7 +285,7 @@ unsigned long long insert(memmap_trie *map, vhost_memory_region *val)
 			NODE_PTR(&new_ptr), node_skip, PREFIX_ARGS(map, &new_ptr));
 
 			/* relocate old leaf to new node reindexing it to new offset */
-			addr_inc = 1ULL << (64 - (j + 1)  * RADIX_WIDTH_BITS);
+			addr_inc = 1ULL << (KEY_BITS_SIZE - (j + 1)  * RADIX_WIDTH_BITS);
 			for (; old_addr < end_addr;
 				old_addr += addr_inc) {
 				k = get_index(j, old_addr);
@@ -323,7 +324,7 @@ unsigned long long insert(memmap_trie *map, vhost_memory_region *val)
 
 
 			DBG("insert L%llx at N%llx[%x]\taddr: %llx\n", val_ptr, NODE_PTR(node_ptr), i, addr);
-			shift = 64 - (level + skip + 1)  * RADIX_WIDTH_BITS;
+			shift = KEY_BITS_SIZE - (level + skip + 1)  * RADIX_WIDTH_BITS;
 			addr_inc = 1ULL << shift;
 			addr += addr_inc;
 			skip -= NODE_SKIP(node_ptr);
@@ -349,7 +350,7 @@ const inline vhost_memory_region *lookup(unsigned long long node_ptr, const unsi
 		const trie_node *node;
 
 		a <<= RADIX_WIDTH_BITS * (((uint8_t)node_ptr & 0xF) >> 1);
-		i = a >> (64 - RADIX_WIDTH_BITS);
+		i = a >> (KEY_BITS_SIZE - RADIX_WIDTH_BITS);
 		a <<= RADIX_WIDTH_BITS;
 		node = (trie_node *)(node_ptr & ~0xF);
 		node_ptr = *(const unsigned long long *)(&node->val[i]);
@@ -375,7 +376,7 @@ void dump_map(memmap_trie *map, trie_node_value_t *node_ptr)
 	node_val = get_trie_node(node_ptr);
 	for (i =0; i < NODE_WITDH; i++) {
 		if (!IS_FREE(&node_val->val[i])) {
-			printf("%sN%llx[%x]  skip: %d prefix: %.*llx:%d\n", in, NODE_PTR(node_ptr), i, NODE_SKIP(node_ptr), nprefix->len * 2, PREFIX_VAL(nprefix) >> (64 - RADIX_WIDTH_BITS * nprefix->len), nprefix->len);
+			printf("%sN%llx[%x]  skip: %d prefix: %.*llx:%d\n", in, NODE_PTR(node_ptr), i, NODE_SKIP(node_ptr), nprefix->len * 2, PREFIX_VAL(nprefix) >> (KEY_BITS_SIZE - RADIX_WIDTH_BITS * nprefix->len), nprefix->len);
 			if (IS_LEAF(&node_val->val[i])) {
 				vhost_memory_region *v =
 					get_val(NODE_PTR(&node_val->val[i]));
