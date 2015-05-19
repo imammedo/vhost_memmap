@@ -7,10 +7,10 @@
 #include <assert.h>
 
 typedef struct vhost_memory_region {
-        uint64_t guest_phys_addr;
-        uint64_t memory_size;
-        uint64_t userspace_addr;
-        uint64_t gpa_end;
+        unsigned long long guest_phys_addr;
+        unsigned long long memory_size;
+        unsigned long long userspace_addr;
+        unsigned long long gpa_end;
 } vhost_memory_region __attribute__((aligned (32)));
 
 struct vhost_memory {
@@ -24,13 +24,13 @@ struct vhost_memory {
 #define VHOST_PHYS_USED_BITS 44
 
 typedef struct trie_prefix {
-	uint64_t len:3;
-	uint64_t val:60;
-	uint64_t non_uniform:1;
+	unsigned long long len:3;
+	unsigned long long val:60;
+	unsigned long long non_uniform:1;
 } trie_prefix;
 
 typedef struct {
-	uint64_t ptr;
+	unsigned long long ptr;
 	trie_prefix prefix;
 } trie_node_value_t __attribute__((aligned (16)));
 
@@ -44,7 +44,7 @@ typedef struct {
 #define NODE_SKIP(x) (((x)->ptr & 0xf) >> 1)
 #define SET_NODE_SKIP(x, v) (x)->ptr = (x)->ptr & ~(7ULL << 1) | (((v) & 0xf) << 1)
 
-#define PREFIX_VAL(x) ((uint64_t)((x)->val) << 4)
+#define PREFIX_VAL(x) ((unsigned long long)((x)->val) << 4)
 
 #define RADIX_WIDTH_BITS   8
 #define NODE_WITDH (1ULL << RADIX_WIDTH_BITS)
@@ -68,7 +68,7 @@ memmap_trie *create_memmap_trie()
 	return map;
 }
 
-void node_add_leaf(trie_node_value_t *node_val, uint64_t ptr)
+void node_add_leaf(trie_node_value_t *node_val, unsigned long long ptr)
 {
 	MARK_AS_LEAF(node_val);
 	SET_NODE_PTR(node_val, ptr);
@@ -79,17 +79,17 @@ static void replace_node(trie_node_value_t *node_val, const trie_node_value_t *n
 	*node_val = *new_ptr;
 }
 
-const uint64_t get_index(const int level, const uint64_t addr)
+const unsigned long long get_index(const int level, const unsigned long long addr)
 {
 	int lvl_shift = 64 - RADIX_WIDTH_BITS * (level + 1);
 	return (addr >> lvl_shift) & (NODE_WITDH - 1);
 }
 
 /* returns common prefix length between addr and prefix */
-int prefix_len(uint64_t a, uint64_t b, int max_len)
+int prefix_len(unsigned long long a, unsigned long long b, int max_len)
 {
 	unsigned depth;
-	uint64_t idx;
+	unsigned long long idx;
 
 	for (depth = 0; depth < max_len; depth++) {
 		idx = get_index(depth, b);
@@ -104,7 +104,7 @@ trie_prefix *get_node_prefix(memmap_trie *map, trie_node_value_t *node_ptr)
 	return &node_ptr->prefix;
 }
 
-void set_prefix(trie_prefix *prefix, uint64_t addr, int len)
+void set_prefix(trie_prefix *prefix, unsigned long long addr, int len)
 {
 	addr = addr >> (64 - RADIX_WIDTH_BITS * len);
 	prefix->val = (addr << (64 - RADIX_WIDTH_BITS * len)) >> 4;
@@ -122,11 +122,11 @@ void set_prefix(trie_prefix *prefix, uint64_t addr, int len)
 
 trie_node *get_trie_node(const trie_node_value_t *node_val)
 {
-	uint64_t  addr = NODE_PTR(node_val);
+	unsigned long long  addr = NODE_PTR(node_val);
 	return (trie_node *)(addr << 4);
 }
 
-vhost_memory_region *get_val(uint64_t ptr)
+vhost_memory_region *get_val(unsigned long long ptr)
 {
         return (vhost_memory_region *)(ptr << 4);
 }
@@ -137,7 +137,7 @@ static inline void * ERR_PTR(long error)
 }
 
 static trie_node *alloc_node(trie_node_value_t *node_ptr, memmap_trie *map,
-				uint64_t addr, int len, int skip, bool non_uniform) {
+				unsigned long long addr, int len, int skip, bool non_uniform) {
 	trie_node *new_node;
 	trie_prefix *prefix;
 
@@ -163,9 +163,9 @@ static void clear_node_val(trie_node_value_t *node_ptr)
 	memset(node_ptr, 0, sizeof(*node_ptr));
 }
 
-static bool addr_matches_value(trie_node_value_t *node_ptr, uint64_t addr) {
-	uint64_t start = get_val(NODE_PTR(node_ptr))->guest_phys_addr;
-	uint64_t end = get_val(NODE_PTR(node_ptr))->gpa_end;
+static bool addr_matches_value(trie_node_value_t *node_ptr, unsigned long long addr) {
+	unsigned long long start = get_val(NODE_PTR(node_ptr))->guest_phys_addr;
+	unsigned long long end = get_val(NODE_PTR(node_ptr))->gpa_end;
 
 	if (addr >= start && addr < end)
 		return true;
@@ -174,7 +174,7 @@ static bool addr_matches_value(trie_node_value_t *node_ptr, uint64_t addr) {
 }
 
 /* returns pointer to inserted value or 0 if insert fails */
-uint64_t insert(memmap_trie *map, vhost_memory_region *val)
+unsigned long long insert(memmap_trie *map, vhost_memory_region *val)
 {
 	unsigned i, k, j, n;
 	trie_prefix *prefix;
@@ -182,10 +182,10 @@ uint64_t insert(memmap_trie *map, vhost_memory_region *val)
 	trie_node_value_t new_ptr, *node_ptr = &map->root;
 	int level = 0;
 	int skip = 0;
-	uint64_t val_ptr = 0;
-	uint64_t addr_inc = 0;
-	uint64_t end = val->guest_phys_addr + val->memory_size;
-	uint64_t addr = val->guest_phys_addr;
+	unsigned long long val_ptr = 0;
+	unsigned long long addr_inc = 0;
+	unsigned long long end = val->guest_phys_addr + val->memory_size;
+	unsigned long long addr = val->guest_phys_addr;
 	do {
 		DBG("=== addr: 0x%llx\tval: %p, inc: 0x%llx\n", addr, val, addr_inc);
 		prefix = get_node_prefix(map, node_ptr);
@@ -252,7 +252,7 @@ uint64_t insert(memmap_trie *map, vhost_memory_region *val)
 		DBG("N%llx Nskip: %d " PREFIX_FMT "\n", NODE_PTR(node_ptr), NODE_SKIP(node_ptr),
 			 PREFIX_ARGS(map, node_ptr));
 		if (IS_LEAF(&node->val[i])) {
-			uint64_t old_addr, end_addr;
+			unsigned long long old_addr, end_addr;
 			void *ptr;
 			int old_nskip;
 			int node_skip;
@@ -339,11 +339,11 @@ uint64_t insert(memmap_trie *map, vhost_memory_region *val)
 #define unlikely(x)     __builtin_expect(!!(x), 0)
 #define likely(x)     __builtin_expect(!!(x), 1)
 
-const inline vhost_memory_region *lookup(uint64_t node_ptr, const uint64_t addr)
+const inline vhost_memory_region *lookup(unsigned long long node_ptr, const unsigned long long addr)
 {
 	const vhost_memory_region *v;
 	unsigned i;
-	uint64_t a = addr;
+	unsigned long long a = addr;
 
 	do {
 		const trie_node *node;
@@ -352,7 +352,7 @@ const inline vhost_memory_region *lookup(uint64_t node_ptr, const uint64_t addr)
 		i = a >> (64 - RADIX_WIDTH_BITS);
 		a <<= RADIX_WIDTH_BITS;
 		node = (trie_node *)(node_ptr & ~0xF);
-		node_ptr = *(const uint64_t *)(&node->val[i]);
+		node_ptr = *(const unsigned long long *)(&node->val[i]);
 	} while ((uint8_t)node_ptr & 0xF);
 
 	v = (vhost_memory_region *)(node_ptr);
@@ -391,7 +391,7 @@ void dump_map(memmap_trie *map, trie_node_value_t *node_ptr)
 }
 
 struct vhost_memory_region *find_region(struct vhost_memory *mem,
-                                                     uint64_t addr, uint32_t len)
+                                                     unsigned long long addr, uint32_t len)
 {
         struct vhost_memory_region *reg;
         int i;
@@ -405,17 +405,17 @@ struct vhost_memory_region *find_region(struct vhost_memory *mem,
         return NULL;
 }
 
-void test_lookup(memmap_trie *map, struct vhost_memory *mem, vhost_memory_region *vm, int vm_count, uint64_t step)
+void test_lookup(memmap_trie *map, struct vhost_memory *mem, vhost_memory_region *vm, int vm_count, unsigned long long step)
 {
 	int i;
 	
 	step = step ? step : 1;
 	for (i = 0; i < vm_count; i++) {
-		uint64_t addr, end;
+		unsigned long long addr, end;
 
 		end = vm[i].guest_phys_addr + vm[i].memory_size;
 		for (addr = vm[i].guest_phys_addr; addr < end; addr += step) {
-		if (!lookup(*(uint64_t *)&map->root, addr)) {
+		if (!lookup(*(unsigned long long *)&map->root, addr)) {
 				dump_map(map, &map->root);
 				printf("addr: %.16llx\n", addr);
 				assert(0);
@@ -425,7 +425,7 @@ void test_lookup(memmap_trie *map, struct vhost_memory *mem, vhost_memory_region
 	}
 }
 
-void test_vhost_memory_array(vhost_memory_region *vm, int vm_count, uint64_t step)
+void test_vhost_memory_array(vhost_memory_region *vm, int vm_count, unsigned long long step)
 {
 	int i;
 	struct vhost_memory *mem;
@@ -433,7 +433,7 @@ void test_vhost_memory_array(vhost_memory_region *vm, int vm_count, uint64_t ste
 
 	printf("\n\n\ntest_vhost_memory_array:\n\n");
 	for (i = 0; i < vm_count; i++) {
-		uint64_t j, end;
+		unsigned long long j, end;
 		
 			assert(insert(map, &vm[i]));
 	}
