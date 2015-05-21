@@ -96,7 +96,7 @@ static trie_node *alloc_node(trie_node_value_t *node_ptr, memmap_trie *map,
 	if (!new_node)
 		return ERR_PTR(-ENOMEM);
 
-	memset(new_node, 0, sizeof(new_node));
+	memset(new_node, 0, sizeof(*new_node));
 	SET_NODE_PTR(node_ptr, (unsigned long long)new_node >> 4);
 	SET_NODE_SKIP(node_ptr, skip);
 	MARK_AS_NODE(node_ptr);
