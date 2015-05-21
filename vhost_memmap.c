@@ -305,5 +305,34 @@ unsigned long long vhost_insert_region(memmap_trie *map, vhost_memory_region *va
 	return val_ptr;
 }
 
+static void free_memmap_trie_node(trie_node_value_t *node_prt,
+		vhost_memory_region **leaf)
+{
+	int i;
+	trie_node *node = get_trie_node(node_prt);
 
+	for (i = 0; i < NODE_WITDH; i++)
+		if (IS_LEAF(&node->val[i])) {
+			vhost_memory_region *v;
 
+			v = get_val(NODE_PTR(&node->val[i]));
+			if (*leaf && *leaf != v) {
+				free(*leaf);
+			}
+			*leaf = v;
+		} else if (IS_NODE(&node->val[i])) {
+			free_memmap_trie_node(&node->val[i], leaf);
+		}
+	free(node);
+}
+
+void vhost_free_memmap_trie(memmap_trie *map)
+{
+	vhost_memory_region *leaf = 0;
+
+	free_memmap_trie_node(&map->root, &leaf);
+	if (leaf)
+		free(leaf);
+
+	free(map);
+}
