@@ -64,7 +64,7 @@ void test_vhost_memory_array(vhost_memory_region *vm, int vm_count, unsigned lon
 	memcpy(mem->regions, vm, sizeof *vm * vm_count);
 	mem->nregions = vm_count;
 
-        dump_map(map, &map->root);
+//        dump_map(map, &map->root);
         test_lookup(map, mem, vm, vm_count, 10);
 	free(mem);
 	vhost_free_memmap_trie(map);
@@ -105,17 +105,20 @@ vhost_memory_region iterator[] = {
 
 { 0xff00010000000000, 0x100, 0x7fe3b0000000 },
 { 0xffff000000100000, 0x100, 0x7fe3b0000000 },
-//{ 0xffffaa0000100000, 0x100, 0x7fe3b0000000 },
-//{ 0xffffff0000100000, 0x100, 0x7fe3b0000000 },
+{ 0xffffaa0000100000, 0x100, 0x7fe3b0000000 },
+{ 0xffffff0000100000, 0x100, 0x7fe3b0000000 },
+{ 0xffffff0000100200, 0x100, 0x7fe3b0000000 },
+{ 0xffffff0000100300, 0x1, 0x7fe3b0000000 },
+{ 0xffffff0000100301, 0xfe, 0x7fe3b0000000 },
 
 };
 
 #define ARRAY_SIZE(a) (sizeof(a)/sizeof(a[0]))
 int main(int argc, char **argv)
 {
-//	test_vhost_memory_array(vm1, ARRAY_SIZE(vm1), 1);
+	test_vhost_memory_array(vm1, ARRAY_SIZE(vm1), 1);
 //	test_vhost_memory_array(vm2, ARRAY_SIZE(vm2), 0x1000);
-//	test_vhost_memory_array(level_compression, ARRAY_SIZE(level_compression), 0xfe);
+	test_vhost_memory_array(level_compression, ARRAY_SIZE(level_compression), 0xfe);
 	test_vhost_memory_array(iterator, ARRAY_SIZE(iterator), 0xfe);
 	return 0;
 }

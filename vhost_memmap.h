@@ -66,9 +66,26 @@ unsigned long long vhost_insert_region(memmap_trie *map, vhost_memory_region *va
 #define VHOST_TRIE_MAX_DEPTH (sizeof(unsigned long long) * 8 / VHOST_RADIX_BITS)
 struct vhost_trie_iter {
 	int level;
+	int cur_idx;
 	int idx[VHOST_TRIE_MAX_DEPTH];
 	trie_node *nodes[VHOST_TRIE_MAX_DEPTH];
 };
+
+#define vhost_memmap_walk_nodes(i, node, child) \
+	for (i.level = 0, i.nodes[0] = node, i.idx[0] = 0, \
+		child = &node->val[i.idx[i.level]]; \
+		((char *)child - (char *)node) >> 4 < NODE_WITDH; \
+		node = i.nodes[i.level], \
+		child = &node->val[i.idx[i.level]], \
+		i.idx[i.level] < NODE_WITDH  && IS_NODE(child) ? \
+			(i.idx[i.level]++, i.level++, \
+			 i.nodes[i.level] = get_trie_node(child), \
+			 i.idx[i.level] = 0) : \
+                        (i.idx[i.level]++), \
+		i.idx[i.level] == NODE_WITDH ? \
+			(i.level -= i.level > 0 ? 1 : 0) : \
+			(i.level) \
+                )
 
 void dump_map(memmap_trie *map, trie_node_value_t *node_ptr);
 

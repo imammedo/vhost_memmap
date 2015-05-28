@@ -319,51 +319,35 @@ static void free_memmap_trie_node(trie_node_value_t *node_prt,
 	for (i.level = 0, i.nodes[0] = node, i.idx[0] = 0,
 	     child = &node->val[i.idx[i.level]];
 
-	     i.idx[i.level] < NODE_WITDH;
-
-	     i.idx[i.level] == (NODE_WITDH - 1) ?
+	     ((char *)child - (char *)node) >> 4 < NODE_WITDH;
+	
+	      node = i.nodes[i.level],
+	      child = &node->val[i.idx[i.level]],
+	      i.idx[i.level] < NODE_WITDH  && IS_NODE(child) ?
+			(i.idx[i.level]++, i.level++, i.nodes[i.level] = get_trie_node(child), i.idx[i.level] = 0) :
+			(i.idx[i.level]++),
+	      i.idx[i.level] == NODE_WITDH ?
 		(i.level -= i.level > 0 ? 1 : 0) :
-		(i.level),
-	     node = i.nodes[i.level],
-	     child = &node->val[i.idx[i.level]],
-	     i.idx[i.level] < NODE_WITDH && IS_NODE(child) ?
-		(i.level++, i.nodes[i.level] = get_trie_node(child), i.idx[i.level] = -1) :
-	        (i.idx[i.level]++)
+		(i.level)
 		) {
-//		child = &node->val[i.idx[i.level]];
-
-		if (last_node && last_node != node) {
-			printf("free N%x\n", last_node);
-	//		free(last_node);
-			last_node = NULL;
-		}
-		if (child->ptr)
-			printf("N%x[%x] = %s%x\n", node, i.idx[i.level], 
-				IS_LEAF(child) ? "L" : "N", child->ptr);
+//		if (child->ptr) printf("N%llx[%x] = %s%llx\n", (unsigned long long)node >> 4, i.idx[i.level], IS_LEAF(child) ? "L" : "N", child->ptr >> 4);
 		if (IS_LEAF(child)) {
 			vhost_memory_region *v;
 
 			v = get_val(NODE_PTR(child));
 			if (*leaf && *leaf != v) {
 				free(*leaf);
-				printf("free L%x\n", *leaf);
+			//	printf("free L%llx\n", (unsigned long long)(*leaf) >> 4);
 			}
 			*leaf = v;
-		} else if (IS_NODE(child)) {
-//			i.level++;
-//			i.nodes[i.level] = get_trie_node(child);
-//			i.idx[i.level] = -1;
-			last_node = i.nodes[i.level];
+		}
+		if (((char *)child - (char *)node) >> 4 == NODE_WITDH - 1) {
+		//	printf("free N%llx\n", (unsigned long long)node >> 4);
+			free(node);
 		}
 	}
-	if (last_node && last_node != node) {
-		printf("free N%x\n", last_node);
-	//	free(last_node);
-	}
-	printf("last free N%x\n", node);
-	//free(node);
-	printf("last free L%x\n", *leaf);
-	//free(*leaf);
+//	printf("last free L%x\n", (unsigned long long)(*leaf) >> 4);
+	free(*leaf);
 }
 
 void vhost_free_memmap_trie(memmap_trie *map)
