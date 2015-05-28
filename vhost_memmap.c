@@ -311,28 +311,14 @@ unsigned long long vhost_insert_region(memmap_trie *map, vhost_memory_region *va
 static void free_memmap_trie_node(trie_node_value_t *node_prt,
 		vhost_memory_region **leaf)
 {
-	trie_node *node = get_trie_node(node_prt);
+	vhost_memory_region *v;
 	struct vhost_trie_iter i;
 	trie_node_value_t *child;
-	trie_node *last_node = NULL;
+	trie_node *node = get_trie_node(node_prt);
 
-	for (i.level = 0, i.nodes[0] = node, i.idx[0] = 0,
-	     child = &node->val[i.idx[i.level]];
-
-	     ((char *)child - (char *)node) >> 4 < NODE_WITDH;
-	
-	      node = i.nodes[i.level],
-	      child = &node->val[i.idx[i.level]],
-	      i.idx[i.level] < NODE_WITDH  && IS_NODE(child) ?
-			(i.idx[i.level]++, i.level++, i.nodes[i.level] = get_trie_node(child), i.idx[i.level] = 0) :
-			(i.idx[i.level]++),
-	      i.idx[i.level] == NODE_WITDH ?
-		(i.level -= i.level > 0 ? 1 : 0) :
-		(i.level)
-		) {
+	vhost_memmap_walk_nodes (i, node, child) {
 //		if (child->ptr) printf("N%llx[%x] = %s%llx\n", (unsigned long long)node >> 4, i.idx[i.level], IS_LEAF(child) ? "L" : "N", child->ptr >> 4);
 		if (IS_LEAF(child)) {
-			vhost_memory_region *v;
 
 			v = get_val(NODE_PTR(child));
 			if (*leaf && *leaf != v) {
@@ -341,12 +327,12 @@ static void free_memmap_trie_node(trie_node_value_t *node_prt,
 			}
 			*leaf = v;
 		}
+		/* if t's last element in node, delete node */
 		if (((char *)child - (char *)node) >> 4 == NODE_WITDH - 1) {
 		//	printf("free N%llx\n", (unsigned long long)node >> 4);
 			free(node);
 		}
 	}
-//	printf("last free L%x\n", (unsigned long long)(*leaf) >> 4);
 	free(*leaf);
 }
 
