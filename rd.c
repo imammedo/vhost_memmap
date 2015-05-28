@@ -7,40 +7,6 @@
 #include <errno.h>
 #include <assert.h>
 
-/*
-int ident = 0;
-void dump_map(memmap_trie *map, trie_node_value_t *node_ptr)
-{
-	trie_node *node_val;
-	int i;
-	char in[] = "                                                   ";
-	in[ident*3] = 0;
-	trie_prefix *nprefix = get_node_prefix(map, node_ptr);
-
-        ident++;
-	node_val = get_trie_node(node_ptr);
-	for (i =0; i < NODE_WITDH; i++) {
-		if (!IS_FREE(&node_val->val[i])) {
-			printf("%sN%llx[%x]  skip: %d prefix: %.*llx:%d\n",
-			 	in, NODE_PTR(node_ptr), i, NODE_SKIP(node_ptr),
-				nprefix->len * 2, PREFIX_VAL(nprefix) >>
-				 (VHOST_ADDR_BITS - VHOST_RADIX_BITS * nprefix->len),
-				nprefix->len);
-			if (IS_LEAF(&node_val->val[i])) {
-				vhost_memory_region *v =
-					get_val(NODE_PTR(&node_val->val[i]));
-				printf("%s   L%llx: a: %.16llx\n", in,
-					 NODE_PTR(&node_val->val[i]),
-					 v->guest_phys_addr);
-			} else {
-				dump_map(map, &node_val->val[i]);
-			}
-		}
-	}
-        ident--;
-}
-*/
-
 struct vhost_memory {
         uint32_t nregions;
         uint32_t padding;
@@ -98,7 +64,7 @@ void test_vhost_memory_array(vhost_memory_region *vm, int vm_count, unsigned lon
 	memcpy(mem->regions, vm, sizeof *vm * vm_count);
 	mem->nregions = vm_count;
 
-        //dump_map(map, &map->root);
+        dump_map(map, &map->root);
         test_lookup(map, mem, vm, vm_count, 10);
 	free(mem);
 	vhost_free_memmap_trie(map);
@@ -134,11 +100,22 @@ vhost_memory_region level_compression[] = {
 { 0x0000000000100000, 0x1, 0x7fe3b0000000 },
 };
 
+vhost_memory_region iterator[] = {
+{ 0xff00000000000000, 0x100, 0x7fe3b0000000 },
+
+{ 0xff00010000000000, 0x100, 0x7fe3b0000000 },
+{ 0xffff000000100000, 0x100, 0x7fe3b0000000 },
+//{ 0xffffaa0000100000, 0x100, 0x7fe3b0000000 },
+//{ 0xffffff0000100000, 0x100, 0x7fe3b0000000 },
+
+};
+
 #define ARRAY_SIZE(a) (sizeof(a)/sizeof(a[0]))
 int main(int argc, char **argv)
 {
-	test_vhost_memory_array(vm1, ARRAY_SIZE(vm1), 1);
-	test_vhost_memory_array(vm2, ARRAY_SIZE(vm2), 0x1000);
-	test_vhost_memory_array(level_compression, ARRAY_SIZE(level_compression), 0xfe);
+//	test_vhost_memory_array(vm1, ARRAY_SIZE(vm1), 1);
+//	test_vhost_memory_array(vm2, ARRAY_SIZE(vm2), 0x1000);
+//	test_vhost_memory_array(level_compression, ARRAY_SIZE(level_compression), 0xfe);
+	test_vhost_memory_array(iterator, ARRAY_SIZE(iterator), 0xfe);
 	return 0;
 }

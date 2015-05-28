@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <errno.h>
+#include <stdio.h>
 
 static void * ERR_PTR(long error)
 {
@@ -310,22 +311,59 @@ unsigned long long vhost_insert_region(memmap_trie *map, vhost_memory_region *va
 static void free_memmap_trie_node(trie_node_value_t *node_prt,
 		vhost_memory_region **leaf)
 {
-	int i;
 	trie_node *node = get_trie_node(node_prt);
+	struct vhost_trie_iter i;
+	trie_node_value_t *child;
+	trie_node *last_node = NULL;
 
-	for (i = 0; i < NODE_WITDH; i++)
-		if (IS_LEAF(&node->val[i])) {
+	for (i.level = 0, i.nodes[0] = node, i.idx[0] = 0,
+	     child = &node->val[i.idx[i.level]];
+
+	     i.idx[i.level] < NODE_WITDH;
+
+	     i.idx[i.level] == (NODE_WITDH - 1) ?
+		(i.level -= i.level > 0 ? 1 : 0) :
+		(i.level),
+	     node = i.nodes[i.level],
+	     child = &node->val[i.idx[i.level]],
+	     i.idx[i.level] < NODE_WITDH && IS_NODE(child) ?
+		(i.level++, i.nodes[i.level] = get_trie_node(child), i.idx[i.level] = -1) :
+	        (i.idx[i.level]++)
+		) {
+//		child = &node->val[i.idx[i.level]];
+
+		if (last_node && last_node != node) {
+			printf("free N%x\n", last_node);
+	//		free(last_node);
+			last_node = NULL;
+		}
+		if (child->ptr)
+			printf("N%x[%x] = %s%x\n", node, i.idx[i.level], 
+				IS_LEAF(child) ? "L" : "N", child->ptr);
+		if (IS_LEAF(child)) {
 			vhost_memory_region *v;
 
-			v = get_val(NODE_PTR(&node->val[i]));
+			v = get_val(NODE_PTR(child));
 			if (*leaf && *leaf != v) {
 				free(*leaf);
+				printf("free L%x\n", *leaf);
 			}
 			*leaf = v;
-		} else if (IS_NODE(&node->val[i])) {
-			free_memmap_trie_node(&node->val[i], leaf);
+		} else if (IS_NODE(child)) {
+//			i.level++;
+//			i.nodes[i.level] = get_trie_node(child);
+//			i.idx[i.level] = -1;
+			last_node = i.nodes[i.level];
 		}
-	free(node);
+	}
+	if (last_node && last_node != node) {
+		printf("free N%x\n", last_node);
+	//	free(last_node);
+	}
+	printf("last free N%x\n", node);
+	//free(node);
+	printf("last free L%x\n", *leaf);
+	//free(*leaf);
 }
 
 void vhost_free_memmap_trie(memmap_trie *map)
@@ -333,8 +371,38 @@ void vhost_free_memmap_trie(memmap_trie *map)
 	vhost_memory_region *leaf = 0;
 
 	free_memmap_trie_node(&map->root, &leaf);
-	if (leaf)
-		free(leaf);
 
 	free(map);
+}
+
+int ident = 0;
+void dump_map(memmap_trie *map, trie_node_value_t *node_ptr)
+{
+	trie_node *node_val;
+	int i;
+	char in[] = "                                                   ";
+	in[ident*3] = 0;
+	trie_prefix *nprefix = get_node_prefix(map, node_ptr);
+
+        ident++;
+	node_val = get_trie_node(node_ptr);
+	for (i =0; i < NODE_WITDH; i++) {
+		if (!IS_FREE(&node_val->val[i])) {
+			printf("%sN%llx[%x]  skip: %d prefix: %.*llx:%d\n",
+			 	in, NODE_PTR(node_ptr), i, NODE_SKIP(node_ptr),
+				nprefix->len * 2, PREFIX_VAL(nprefix) >>
+				 (VHOST_ADDR_BITS - VHOST_RADIX_BITS * nprefix->len),
+				nprefix->len);
+			if (IS_LEAF(&node_val->val[i])) {
+				vhost_memory_region *v =
+					get_val(NODE_PTR(&node_val->val[i]));
+				printf("%s   L%llx: a: %.16llx\n", in,
+					 NODE_PTR(&node_val->val[i]),
+					 v->guest_phys_addr);
+			} else {
+				dump_map(map, &node_val->val[i]);
+			}
+		}
+	}
+        ident--;
 }

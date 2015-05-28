@@ -62,4 +62,14 @@ static const inline vhost_memory_region *lookup_region(unsigned long long node_p
 
 
 unsigned long long vhost_insert_region(memmap_trie *map, vhost_memory_region *val);
+
+#define VHOST_TRIE_MAX_DEPTH (sizeof(unsigned long long) * 8 / VHOST_RADIX_BITS)
+struct vhost_trie_iter {
+	int level;
+	int idx[VHOST_TRIE_MAX_DEPTH];
+	trie_node *nodes[VHOST_TRIE_MAX_DEPTH];
+};
+
+void dump_map(memmap_trie *map, trie_node_value_t *node_ptr);
+
 #endif
