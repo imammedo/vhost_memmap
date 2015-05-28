@@ -294,6 +294,8 @@ unsigned long long vhost_insert_region(memmap_trie *map, vhost_memory_region *va
 				val_ptr, NODE_PTR(node_ptr), i, addr);
 			addr_inc = 1ULL << (VHOST_ADDR_BITS - (level + skip + 1)
 					  	* VHOST_RADIX_BITS);
+			if ((addr + addr_inc) < addr)
+				break;
 			addr += addr_inc;
 			skip -= NODE_SKIP(node_ptr);
 		} else { /* traverse tree */
