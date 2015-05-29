@@ -71,28 +71,33 @@ struct vhost_trie_iter {
 	trie_node *nodes[VHOST_TRIE_MAX_DEPTH];
 };
 
-#define vhost_memmap_walk_nodes(i, map, node, child) \
-	for (node = get_trie_node(map), i.level = 0, i.nodes[0] = node, i.idx[0] = 0, \
-		child = &node->val[i.idx[i.level]]; \
-		((char *)child - (char *)node) >> 4 < NODE_WITDH; \
-		node = i.nodes[i.level], \
-		child = &node->val[i.idx[i.level]], \
-		i.idx[i.level] < NODE_WITDH  && IS_NODE(child) ? \
-			(i.idx[i.level]++, i.level++, \
-			 i.nodes[i.level] = get_trie_node(child), \
-			 i.idx[i.level] = 0) : \
-                        (i.idx[i.level]++), \
-		i.idx[i.level] == NODE_WITDH ? \
-			(i.level -= i.level > 0 ? 1 : 0) : \
-			(i.level) \
+#define vhost_memmap_walk_nodes(i, map, node, child)                \
+	for (node = get_trie_node(map),                             \
+		i.level = 0, i.nodes[0] = node, i.idx[0] = 0,       \
+		child = &node->val[i.idx[i.level]];                 \
+		((char *)child - (char *)node) >> 4 < NODE_WITDH;   \
+		/* prepare elements for current iteration */        \
+		node = i.nodes[i.level],                            \
+		child = &node->val[i.idx[i.level]],                 \
+		/* prepare level & index for next iter */           \
+		i.idx[i.level] < NODE_WITDH  && IS_NODE(child) ?    \
+			(i.idx[i.level]++, i.level++,               \
+			 i.nodes[i.level] = get_trie_node(child),   \
+			 i.idx[i.level] = 0) :                      \
+                        (i.idx[i.level]++),                         \
+		/* prepare to go up on next iter if last idx */     \
+		i.idx[i.level] == NODE_WITDH ?                      \
+			(i.level -= i.level > 0 ? 1 : 0) :          \
+			(i.level)                                   \
                 )
 
-#define vhost_memmap_region_foreach(i, map, node, child, region) \
-	for (region = NULL; region == NULL;) \
-		vhost_memmap_walk_nodes(i, map,node, child) \
-			if (IS_LEAF(child) && (region != get_val(NODE_PTR(child)) ? \
+#define vhost_memmap_region_foreach(i, map, node, child, region)      \
+		region = NULL;                                        \
+		vhost_memmap_walk_nodes(i, map,node, child)           \
+			if (IS_LEAF(child) &&                         \
+			    (region != get_val(NODE_PTR(child)) ?     \
 				(region = get_val(NODE_PTR(child))) : \
-				(NULL)) \
+				(NULL))                               \
 			)
 
 void test_region_foreach(trie_node_value_t *root);
