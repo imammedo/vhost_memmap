@@ -100,7 +100,7 @@ struct vhost_trie_iter {
 				(NULL))                               \
 			)
 
-void test_region_foreach(trie_node_value_t *root);
+void test_region_foreach(trie_node_value_t *root, vhost_memory_region *vm, int vm_count);
 void dump_map(memmap_trie *map, trie_node_value_t *node_ptr);
 
 #endif

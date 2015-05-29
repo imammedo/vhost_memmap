@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <stdio.h>
+#include <assert.h>
 
 static void * ERR_PTR(long error)
 {
@@ -373,14 +374,48 @@ void dump_map(memmap_trie *map, trie_node_value_t *node_ptr)
         ident--;
 }
 
-void test_region_foreach(trie_node_value_t *root)
+struct vhost_memory {
+        long nregions;
+        long padding;
+        struct vhost_memory_region regions[0];
+};
+
+static struct vhost_memory_region *find_region(struct vhost_memory *mem,
+                                       unsigned long long addr, int len)
+{
+        struct vhost_memory_region *reg;
+        int i;
+
+        for (i = 0; i < mem->nregions; ++i) {
+                reg = mem->regions + i;
+                if (reg->guest_phys_addr <= addr &&
+                    reg->guest_phys_addr + reg->memory_size - 1 >= addr)
+                        return reg;
+        }
+        return NULL;
+}
+
+void test_region_foreach(trie_node_value_t *root, vhost_memory_region *vm, int vm_count)
 {
 	vhost_memory_region *region;
 	struct vhost_trie_iter i;
 	trie_node_value_t *child;
 	trie_node *node;
+	struct vhost_memory *mem;
+	int j = 0;
+
+        mem = malloc(sizeof(struct vhost_memory) + sizeof *vm * vm_count);
+        memset(mem->regions, sizeof *vm * vm_count, 0);
+        mem->nregions = 0;
 
 	vhost_memmap_region_foreach(i, root, node, child, region) {
-		printf("L%llx\n", (unsigned long long)(region) >> 4);
+	//	printf("L%llx\n", (unsigned long long)(region) >> 4);
+		mem->regions[mem->nregions++] = *region;
 	}
+	assert(mem->nregions != vm_count - 1);
+
+	for (j = 0; j < vm_count; j++) {
+		assert(find_region(mem, vm[j].guest_phys_addr, 0));
+	}
+	free(mem);
 }
