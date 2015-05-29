@@ -39,8 +39,8 @@ void test_lookup(memmap_trie *map, struct vhost_memory *mem, vhost_memory_region
 		end = vm[i].guest_phys_addr + vm[i].memory_size;
 		for (addr = vm[i].guest_phys_addr; addr < end && addr >= vm[i].guest_phys_addr; addr += step) {
 			if (!lookup_region(*(unsigned long long *)&map->root, addr)) {
-				//dump_map(map, &map->root);
-				printf("addr: %.16llx\n", addr);
+				printf("Lookup addr: %.16llx\n", addr);
+//				dump_map(map, &map->root);
 				assert(0);
 			};
 			assert(find_region(mem, addr, 0));
@@ -72,7 +72,7 @@ void test_vhost_memory_array(char *name, vhost_memory_region *vm, int vm_count, 
 	vhost_free_memmap_trie(map);
 }
 
-vhost_memory_region vm1[] = {
+vhost_memory_region mixed[] = {
 { 0xaabb020000000001, 0x10000, 0x7fe3b0000000 },
 { 0xaabb021000000002, 0x10000, 0x7fe3b0000000 },
 { 0x0000000000000001, 0x10000, 0x7fe3b0000000 },
@@ -86,7 +86,7 @@ vhost_memory_region vm1[] = {
 { 0x00000000dd000000, 0x10000, 0x7fe3b0000000 },
 };
 
-vhost_memory_region vm2[] = {
+vhost_memory_region kvm_def[] = {
 { 0x000000000, 0xa0000, 0x7fe2f0000000 },
 { 0x200000000, 0x40000000, 0x7fe3b0000000 },
 { 0x400000000, 0x40000000, 0x7fe3b0000000 },
@@ -122,15 +122,28 @@ vhost_memory_region iterator3[] = {
 { 0xfffa000000000000, 0x5f00000000000, 0x7fe3b0000000 },
 };
 
+vhost_memory_region iterator4[] = {
+{ 0xff00000000000000, 0x1, 0x7fe3b0000000 },
+{ 0xfffa000000000000, 0x5ffffffffff00, 0x7fe3b0000000 },
+};
+
+vhost_memory_region split_leaf[] = {
+{ 0xff00000000000000, 0x3, 0x7fe3b0000000 },
+{ 0xfffa000000000000, 0x5f00000000000, 0x7fe3b0000000 },
+{ 0xffffffffffffff00, 0x1, 0x7fe3b0000000 },
+};
+
 #define ARRAY_SIZE(a) (sizeof(a)/sizeof(a[0]))
 #define TEST_ARGS(var) #var, var, ARRAY_SIZE(var)
 int main(int argc, char **argv)
 {
-	test_vhost_memory_array(TEST_ARGS(vm1), 1);
-	test_vhost_memory_array(TEST_ARGS(vm2), 0x1000);
+	test_vhost_memory_array(TEST_ARGS(mixed), 1);
+	test_vhost_memory_array(TEST_ARGS(kvm_def), 0x1000);
 	test_vhost_memory_array(TEST_ARGS(level_compression), 0xfe);
 	test_vhost_memory_array(TEST_ARGS(iterator1), 0x1);
 	test_vhost_memory_array(TEST_ARGS(iterator2), 0x1);
 	test_vhost_memory_array(TEST_ARGS(iterator3), 0x100000000);
+	test_vhost_memory_array(TEST_ARGS(iterator4), 0x100000000);
+	test_vhost_memory_array(TEST_ARGS(split_leaf), 0x100000000);
 	return 0;
 }
