@@ -133,7 +133,7 @@ static bool addr_matches_value(trie_node_value_t *node_ptr,
 #define PREFIX_FMT "prefix %.*llx:%d"
 #define PREFIX_ARGS(map, ptr) \
 	get_node_prefix(map, ptr)->len * 2, get_node_prefix(map, ptr)->val >> \
-	(VHOST_ADDR_BITS - VHOST_RADIX_BITS * get_node_prefix(map, ptr)->len), \
+	(VHOST_ADDR_BITS - VHOST_RADIX_BITS * get_node_prefix(map, ptr)->len) - 4, \
 	get_node_prefix(map, ptr)->len
 
 /* returns pointer to inserted value or 0 if insert fails */
