@@ -241,11 +241,11 @@ unsigned long long vhost_insert_region(memmap_trie *map, vhost_memory_region *va
 
 			DBG("split leaf at N%llx[%x]\n", NODE_PTR(node_ptr), i);
 			/* get path prefix and skips for new node */
-			j = prefix_len(addr, old_addr, sizeof(addr));
+			j = prefix_len(addr, end_addr - 1, sizeof(addr));
 			node_skip = j - (level + skip) - 1 /* for next level */ ;
 
 			/* alloc interim node for relocating old leaf there */
-			new_node = alloc_node(&new_ptr, map, old_addr, j,
+			new_node = alloc_node(&new_ptr, map, end_addr - 1, j,
 						 node_skip, NON_UNIFORM_NODE);
 
 			DBG("new N%llx\nset N%llx Nskip: %d " PREFIX_FMT "\n",
@@ -253,17 +253,13 @@ unsigned long long vhost_insert_region(memmap_trie *map, vhost_memory_region *va
 			NODE_PTR(&new_ptr), node_skip, PREFIX_ARGS(map, &new_ptr));
 
 			/* relocate old leaf to new node reindexing it to new offset */
-			addr_inc = 1ULL << (VHOST_ADDR_BITS - (j + 1) * VHOST_RADIX_BITS);
-			for ( ; old_addr < end_addr;
-				old_addr += addr_inc) {
-				k = get_index(j, old_addr);
-				if (IS_FREE(&new_node->val[k])) {
-				/* do only one insert in case index for addr matches */
-					node_add_leaf(&new_node->val[k], val_ptr);
-					DBG("relocate L%llx to N%llx[%x]\taddr: %llx\n",
-					 val_ptr, NODE_PTR(&new_ptr), k, old_addr);
-				}
-			}
+			/* since no overlapping ranges are allowed leaf split is possible only at the end of old range */
+			k = 0;
+			do {
+				node_add_leaf(&new_node->val[k], val_ptr);
+				DBG("relocate L%llx to N%llx[%x]\taddr: %llx\n",
+					val_ptr, NODE_PTR(&new_ptr), k, old_addr);
+			} while(++k < get_index(j, end_addr));
 			replace_node(&node->val[i], &new_ptr);
 
 			/* fall to the next level and let 'addr' leaf be inserted */
