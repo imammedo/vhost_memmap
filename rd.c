@@ -127,10 +127,16 @@ vhost_memory_region iterator4[] = {
 { 0xfffa000000000000, 0x5ffffffffff00, 0x7fe3b0000000 },
 };
 
-vhost_memory_region split_leaf[] = {
+vhost_memory_region split_leaf_end[] = {
 { 0xff00000000000000, 0x3, 0x7fe3b0000000 },
 { 0xfffa000000000000, 0x5f00000000000, 0x7fe3b0000000 },
 { 0xffffffffffffff00, 0x1, 0x7fe3b0000000 },
+};
+
+vhost_memory_region split_leaf_start[] = {
+{ 0xff00000000000000, 0x3, 0x7fe3b0000000 },
+{ 0xffffffffffffff00, 0x1, 0x7fe3b0000000 },
+{ 0xfffa000000000000, 0x5f00000000000, 0x7fe3b0000000 },
 };
 
 #define ARRAY_SIZE(a) (sizeof(a)/sizeof(a[0]))
@@ -144,6 +150,7 @@ int main(int argc, char **argv)
 	test_vhost_memory_array(TEST_ARGS(iterator2), 0x1);
 	test_vhost_memory_array(TEST_ARGS(iterator3), 0x100000000);
 	test_vhost_memory_array(TEST_ARGS(iterator4), 0x100000000);
-	test_vhost_memory_array(TEST_ARGS(split_leaf), 0x100000000);
+	test_vhost_memory_array(TEST_ARGS(split_leaf_end), 0x100000000);
+	test_vhost_memory_array(TEST_ARGS(split_leaf_start), 0x100000000);
 	return 0;
 }
