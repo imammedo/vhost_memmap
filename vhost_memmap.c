@@ -253,8 +253,9 @@ unsigned long long vhost_insert_region(memmap_trie *map, vhost_memory_region *va
 			NODE_PTR(&new_ptr), node_skip, PREFIX_ARGS(map, &new_ptr));
 
 			/* relocate old leaf to new node reindexing it to new offset */
-			/* since no overlapping ranges are allowed leaf split is possible only at the end of old range */
-			k = 0;
+			/* since no overlapping ranges are allowed leaf split is possible
+			   only at the before or after of old range */
+			k = get_index(j, old_addr);
 			do {
 				node_add_leaf(&new_node->val[k], old_val_ptr);
 				DBG("relocate L%llx to N%llx[%x]\taddr: %llx\n",
