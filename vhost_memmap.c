@@ -223,8 +223,8 @@ unsigned long long vhost_insert_region(memmap_trie *map, vhost_memory_region *va
 			void *ptr;
 			int old_nskip;
 			int node_skip;
-			val_ptr = NODE_PTR(&node->val[i]);
-			vhost_memory_region *old_val = get_val(val_ptr);
+			unsigned long long old_val_ptr = NODE_PTR(&node->val[i]);
+			vhost_memory_region *old_val = get_val(old_val_ptr);
 			old_addr = old_val->guest_phys_addr;
 			end_addr = old_val->guest_phys_addr + old_val->memory_size;
 
@@ -256,16 +256,15 @@ unsigned long long vhost_insert_region(memmap_trie *map, vhost_memory_region *va
 			/* since no overlapping ranges are allowed leaf split is possible only at the end of old range */
 			k = 0;
 			do {
-				node_add_leaf(&new_node->val[k], val_ptr);
+				node_add_leaf(&new_node->val[k], old_val_ptr);
 				DBG("relocate L%llx to N%llx[%x]\taddr: %llx\n",
-					val_ptr, NODE_PTR(&new_ptr), k, old_addr);
+					old_val_ptr, NODE_PTR(&new_ptr), k, old_addr);
 			} while(++k < get_index(j, end_addr));
 			replace_node(&node->val[i], &new_ptr);
 
 			/* fall to the next level and let 'addr' leaf be inserted */
 			node_ptr = &node->val[i];
 			level++; /* +1 for new level */
-			val_ptr = 0;
 		} else if (IS_FREE(&node->val[i])) {
 
 			if (!val_ptr) {
