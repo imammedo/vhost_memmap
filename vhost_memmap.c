@@ -308,24 +308,23 @@ unsigned long long vhost_insert_region(memmap_trie *map, vhost_memory_region *va
 	return val_ptr;
 }
 
-static void free_memmap_trie_node(trie_node_value_t *node_prt,
-		vhost_memory_region **leaf)
+static void free_memmap_trie_node(trie_node_value_t *root)
 {
-	vhost_memory_region *v;
+	vhost_memory_region *region, *prev_region = NULL;
 	struct vhost_trie_iter i;
 	trie_node_value_t *child;
-	trie_node *node = get_trie_node(node_prt);
+	trie_node *node;
 
-	vhost_memmap_walk_nodes (i, node, child) {
+	vhost_memmap_walk_nodes(i, root, node, child) {
 //		if (child->ptr) printf("N%llx[%x] = %s%llx\n", (unsigned long long)node >> 4, i.idx[i.level], IS_LEAF(child) ? "L" : "N", child->ptr >> 4);
 		if (IS_LEAF(child)) {
 
-			v = get_val(NODE_PTR(child));
-			if (*leaf && *leaf != v) {
-				free(*leaf);
+			region = get_val(NODE_PTR(child));
+			if (prev_region && prev_region != region) {
+				free(prev_region);
 			//	printf("free L%llx\n", (unsigned long long)(*leaf) >> 4);
 			}
-			*leaf = v;
+			prev_region = region;
 		}
 		/* if t's last element in node, delete node */
 		if (((char *)child - (char *)node) >> 4 == NODE_WITDH - 1) {
@@ -333,15 +332,12 @@ static void free_memmap_trie_node(trie_node_value_t *node_prt,
 			free(node);
 		}
 	}
-	free(*leaf);
+	free(prev_region);
 }
 
 void vhost_free_memmap_trie(memmap_trie *map)
 {
-	vhost_memory_region *leaf = 0;
-
-	free_memmap_trie_node(&map->root, &leaf);
-
+	free_memmap_trie_node(&map->root);
 	free(map);
 }
 
@@ -375,4 +371,16 @@ void dump_map(memmap_trie *map, trie_node_value_t *node_ptr)
 		}
 	}
         ident--;
+}
+
+void test_region_foreach(trie_node_value_t *root)
+{
+	vhost_memory_region *region;
+	struct vhost_trie_iter i;
+	trie_node_value_t *child;
+	trie_node *node;
+
+	vhost_memmap_region_foreach(i, root, node, child, region) {
+		printf("L%llx\n", (unsigned long long)(region) >> 4);
+	}
 }

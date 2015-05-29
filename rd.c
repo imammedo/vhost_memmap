@@ -66,6 +66,7 @@ void test_vhost_memory_array(vhost_memory_region *vm, int vm_count, unsigned lon
 
 //        dump_map(map, &map->root);
         test_lookup(map, mem, vm, vm_count, 10);
+	test_region_foreach(&map->root);
 	free(mem);
 	vhost_free_memmap_trie(map);
 }

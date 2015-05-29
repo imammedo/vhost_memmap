@@ -71,8 +71,8 @@ struct vhost_trie_iter {
 	trie_node *nodes[VHOST_TRIE_MAX_DEPTH];
 };
 
-#define vhost_memmap_walk_nodes(i, node, child) \
-	for (i.level = 0, i.nodes[0] = node, i.idx[0] = 0, \
+#define vhost_memmap_walk_nodes(i, map, node, child) \
+	for (node = get_trie_node(map), i.level = 0, i.nodes[0] = node, i.idx[0] = 0, \
 		child = &node->val[i.idx[i.level]]; \
 		((char *)child - (char *)node) >> 4 < NODE_WITDH; \
 		node = i.nodes[i.level], \
@@ -87,6 +87,15 @@ struct vhost_trie_iter {
 			(i.level) \
                 )
 
+#define vhost_memmap_region_foreach(i, map, node, child, region) \
+	for (region = NULL; region == NULL;) \
+		vhost_memmap_walk_nodes(i, map,node, child) \
+			if (IS_LEAF(child) && (region != get_val(NODE_PTR(child)) ? \
+				(region = get_val(NODE_PTR(child))) : \
+				(NULL)) \
+			)
+
+void test_region_foreach(trie_node_value_t *root);
 void dump_map(memmap_trie *map, trie_node_value_t *node_ptr);
 
 #endif
