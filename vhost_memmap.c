@@ -409,10 +409,10 @@ void test_region_foreach(trie_node_value_t *root, vhost_memory_region *vm, int v
         mem->nregions = 0;
 
 	vhost_memmap_region_foreach(i, root, node, child, region) {
-	//	printf("L%llx\n", (unsigned long long)(region) >> 4);
+//		printf("L%llx\n", (unsigned long long)(region) >> 4);
 		mem->regions[mem->nregions++] = *region;
 	}
-	assert(mem->nregions != vm_count - 1);
+	assert(mem->nregions == vm_count);
 
 	for (j = 0; j < vm_count; j++) {
 		assert(find_region(mem, vm[j].guest_phys_addr, 0));
