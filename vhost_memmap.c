@@ -350,22 +350,35 @@ void dump_map(memmap_trie *map, trie_node_value_t *node_ptr)
 	char in[] = "                                                   ";
 	in[ident*3] = 0;
 	trie_prefix *nprefix = get_node_prefix(map, node_ptr);
+	trie_node_value_t last_ptr = { .ptr = 0 };
+	int lastp_idx = 0;
+	int skipped = 0;
+	bool p_en = false;
 
         ident++;
 	node_val = get_trie_node(node_ptr);
 	for (i =0; i < NODE_WITDH; i++) {
 		if (!IS_FREE(&node_val->val[i])) {
-			printf("%sN%llx[%x]  skip: %d prefix: %.*llx:%d\n",
-			 	in, NODE_PTR(node_ptr), i, NODE_SKIP(node_ptr),
-				nprefix->len * 2, PREFIX_VAL(nprefix) >>
-				 (VHOST_ADDR_BITS - VHOST_RADIX_BITS * nprefix->len),
-				nprefix->len);
+			if (i == 0xff || NODE_PTR(&last_ptr) != NODE_PTR(&node_val->val[i])) {
+				if (skipped) {
+					vhost_memory_region *v = get_val(NODE_PTR(&node_val->val[lastp_idx]));
+					printf("%s...\n", in);
+					printf("%sN%llx[%x]  skip: %d prefix: %.*llx:%d\n", in, NODE_PTR(node_ptr), lastp_idx + skipped, NODE_SKIP(node_ptr), nprefix->len * 2, PREFIX_VAL(nprefix) >> (VHOST_ADDR_BITS - VHOST_RADIX_BITS * nprefix->len), nprefix->len);
+					printf("%s   L%llx: a: %.16llx\n", in, NODE_PTR(&node_val->val[lastp_idx]), v->guest_phys_addr);
+				}
+				memcpy(&last_ptr, &node_val->val[i], sizeof(last_ptr));
+				lastp_idx = i;
+				skipped = 0;
+				printf("%sN%llx[%x]  skip: %d prefix: %.*llx:%d\n", in, NODE_PTR(node_ptr), i, NODE_SKIP(node_ptr), nprefix->len * 2, PREFIX_VAL(nprefix) >> (VHOST_ADDR_BITS - VHOST_RADIX_BITS * nprefix->len), nprefix->len);
+				p_en = true;
+			} else
+				skipped++;
 			if (IS_LEAF(&node_val->val[i])) {
-				vhost_memory_region *v =
-					get_val(NODE_PTR(&node_val->val[i]));
-				printf("%s   L%llx: a: %.16llx\n", in,
-					 NODE_PTR(&node_val->val[i]),
-					 v->guest_phys_addr);
+				vhost_memory_region *v = get_val(NODE_PTR(&node_val->val[i]));
+				if (p_en) {
+					p_en = false;
+					printf("%s   L%llx: a: %.16llx\n", in, NODE_PTR(&node_val->val[i]), v->guest_phys_addr);
+				}
 			} else {
 				dump_map(map, &node_val->val[i]);
 			}
